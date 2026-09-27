@@ -14,7 +14,8 @@
     :root { --bg: #16150f; --fg: #ece8df; --muted: #9a948a; --line: #e0675b;
             --panel: #211f19; --border: #3a372f; --accent: #7fb0e0; }
   }
-  * { box-sizing: border-box; }
+  /* iPhone でバーやつまみを続けて触ったときに、ダブルタップと判定されて拡大しないようにする */
+  * { box-sizing: border-box; touch-action: manipulation; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
     font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; }
   body { display: flex; flex-direction: column; height: 100dvh;
