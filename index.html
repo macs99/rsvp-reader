@@ -64,6 +64,15 @@
   .note { font-size: 12px; color: var(--muted); margin: 4px 0; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
   #msg { font-size: 13px; color: var(--line); min-height: 1em; }
+  #sync { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 16px; font-size: 13px;
+    background: var(--panel); border-top: 1px solid var(--border); }
+  #sync[hidden] { display: none; }
+  #syncText { flex: 1 1 100%; }
+  #pos { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+  dialog input[type=text] { width: 10em; font: inherit; font-size: 14px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+  .dbxList { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+  .dbxList button { text-align: left; }
   #unitList { font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif; font-size: 14px;
     max-height: 40vh; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px; margin: 0; }
 </style>
@@ -82,9 +91,11 @@
   <div id="hint"></div>
 </div>
 
+<div id="sync" hidden><span id="syncText"></span><button id="syncGo">そこから再開</button><button id="syncNo">この端末の位置から</button></div>
+
 <footer>
   <div id="bar" title="クリックで移動"><div id="barFill"></div></div>
-  <div id="stats"><span id="pos">—</span><span id="remain">—</span></div>
+  <div id="stats"><span id="pos" title="押すと、段落や字数を指定して移動できます">—</span><span id="remain">—</span></div>
   <div id="controls">
     <button id="btnPara" title="段落の頭へ（Shift+←）">⇤段落</button>
     <button id="btnPrev" title="1単位戻る（←）">◀</button>
@@ -99,6 +110,8 @@
   <h2>作品を開く</h2>
   <h3>同梱の作品</h3>
   <button id="btnKumo">芥川龍之介「蜘蛛の糸」</button>
+  <h3>Dropbox</h3>
+  <div id="dbxBox"></div>
   <h3>青空文庫のファイル（zip / txt）</h3>
   <input type="file" id="file">
   <p class="note">iPhone では「ファイル」アプリから選べます。文字コードは UTF-8 / Shift_JIS を自動で判定します。</p>
@@ -115,6 +128,7 @@
   <div class="row"><label for="maxLen">最大文字数</label><input type="number" id="maxLen" min="6" max="30"> 字を超えたら分割</div>
   <div class="row"><label for="pauseComma">読点の後</label><input type="number" id="pauseComma" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
   <div class="row"><label for="pausePeriod">句点の後</label><input type="number" id="pausePeriod" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
+  <div class="row"><label for="device">端末の名前</label><input type="text" id="device" maxlength="20"> 栞に表示</div>
   <h3>状態</h3>
   <p class="note" id="status"></p>
   <h3>前回の計測（最後まで再生したとき）</h3>
@@ -122,6 +136,13 @@
   <h3>冒頭30単位</h3>
   <pre id="unitList"></pre>
   <div class="actions"><button id="btnSettingsClose">閉じる</button></div>
+</dialog>
+
+<dialog id="dlgJump">
+  <h2>位置へ移動</h2>
+  <div class="row"><label for="jumpPara">段落</label><input type="number" id="jumpPara" min="1"><span id="jumpParaMax"></span><button id="btnJumpPara">移動</button></div>
+  <div class="row"><label for="jumpChar">字数</label><input type="number" id="jumpChar" min="1"><span id="jumpCharMax"></span><button id="btnJumpChar">移動</button></div>
+  <div class="actions"><button id="btnJumpClose">閉じる</button></div>
 </dialog>
 
 <!-- 文章処理の中核。tools/check.mjs もこのブロックを読み込んで使う -->
@@ -366,15 +387,29 @@ if (typeof module !== 'undefined') module.exports = Core;
     $('word').textContent = u ? u.text : '';
     var done = u ? u.start + u.len : 0;
     $('barFill').style.width = totalChars ? (done / totalChars * 100) + '%' : '0';
-    $('pos').textContent = u ? totalChars.toLocaleString() + '字中 ' + done.toLocaleString() + '字目' : '—';
+    $('pos').textContent = u ? totalChars.toLocaleString() + '字中 ' + done.toLocaleString() + '字目（第' + (u.para + 1) + '段落）' : '—';
     $('remain').textContent = u ? '残り ' + fmt(remainingMs(playing ? idx + 1 : idx)) : '—';
     $('btnPlay').textContent = playing ? '停止' : '再生';
     if (work && u) savePos();
   }
+  // 作品ごとの読んだ位置（この端末）。{ pos: 字の位置, at: 更新時刻 }。位置が変わったときだけ時刻を更新する
+  function localMark(id) {
+    var m = load('rsvp.pos.' + id);
+    return typeof m === 'number' ? { pos: m, at: 0 } : (m || { pos: 0, at: 0 });
+  }
   var saveTimer = null;
   function savePos() {
     if (saveTimer) return;
-    saveTimer = setTimeout(function () { saveTimer = null; if (work && units[idx]) save('rsvp.pos.' + work.id, units[idx].start); }, 500);
+    saveTimer = setTimeout(function () {
+      saveTimer = null;
+      if (!work || !units[idx]) return;
+      var p = units[idx].start;
+      if (localMark(work.id).pos !== p) save('rsvp.pos.' + work.id, { pos: p, at: Date.now() });
+    }, 500);
+  }
+  function flushPos() {
+    if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+    if (work && units[idx] && localMark(work.id).pos !== units[idx].start) save('rsvp.pos.' + work.id, { pos: units[idx].start, at: Date.now() });
   }
 
   // ---- 再生 ----
@@ -384,6 +419,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     if (idx >= units.length - 1) { finish(now); return; }
     idx++;
     render();
+    if (now - lastSync > 60000) { lastSync = now; flushPos(); syncMark(); }  // 再生中も1分ごとに栞を保存
     nextAt += Core.duration(units[idx], opts());
     timer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
   }
@@ -405,12 +441,14 @@ if (typeof module !== 'undefined') module.exports = Core;
     run = null;
     releaseWake();
     render();
+    flushPos(); syncMark();
   }
   function finish(now) {
     var r = run;
     playing = false; timer = null; run = null;
     releaseWake();
     render();
+    flushPos(); syncMark();
     if (r && r.startIdx === 0 && r.sig === sig()) {
       var actual = now - r.startAt;
       var rec = { at: new Date().toLocaleString('ja-JP'), title: work.title, speed: r.speed,
@@ -458,13 +496,217 @@ if (typeof module !== 'undefined') module.exports = Core;
   function releaseWake() { if (wakeLock) { var l = wakeLock; wakeLock = null; l.release(); wakeStatus = '解除済み'; updateStatus(); } }
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible' && playing && !wakeLock) requestWake();
-    if (document.visibilityState === 'hidden' && playing) stop();
+    if (document.visibilityState === 'hidden') { if (playing) stop(); flushPos(); syncMark(true); }
+    if (document.visibilityState === 'visible' && work) checkRemoteMark();
   });
   function updateStatus() {
     $('status').innerHTML = '区切り処理：' + segMode + '<br>外字：' + gaijiMode + '<br>zip 展開：' + (window.JSZip ? '使えます' : '読み込めていません') +
       '<br>画面の消灯防止：' + wakeStatus + '<br>表示単位：' + units.length + '個　最長 ' +
-      units.reduce(function (m, u) { return Math.max(m, u.len); }, 0) + '字　文字サイズ ' + fitted + 'px';
+      units.reduce(function (m, u) { return Math.max(m, u.len); }, 0) + '字　文字サイズ ' + fitted + 'px' +
+      '<br>Dropbox：' + dbxMode + '<br>この端末の名前：' + deviceName();
   }
+
+  // ---- Dropbox（作品の共有と栞） ----
+  // 専用フォルダー（Dropbox の「アプリ」フォルダーの下）だけを読み書きする。App key は公開してよい値（PKCE 方式）
+  var DBX_KEY = '35c1ircgeeem499';
+  var DBX_REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
+  var MARKS_PATH = '/bookmarks.json';
+  var dbx = load('rsvp.dbx');      // { access, refresh, exp }
+  var dbxMode = dbx ? '接続済み' : '未接続';
+  var remoteMarks = null;          // bookmarks.json の中身 { works: { 作品id: { pos, at, total, title, device } } }
+  var lastSync = 0;
+
+  function deviceName() {
+    if (settings.device) return settings.device;
+    var ua = navigator.userAgent;
+    return /iPhone/.test(ua) ? 'iPhone' : /iPad|Macintosh.*Mobile/.test(ua) ? 'iPad' : /Windows/.test(ua) ? 'Windows PC' : /Mac/.test(ua) ? 'Mac' : 'この端末';
+  }
+  function b64url(buf) {
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function dbxConnect() {
+    var verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+    var state = b64url(crypto.getRandomValues(new Uint8Array(12)));
+    save('rsvp.dbx.pkce', { verifier: verifier, state: state });
+    crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (h) {
+      location.href = 'https://www.dropbox.com/oauth2/authorize?' + new URLSearchParams({
+        client_id: DBX_KEY, response_type: 'code', code_challenge: b64url(h), code_challenge_method: 'S256',
+        redirect_uri: DBX_REDIRECT, token_access_type: 'offline', state: state });
+    });
+  }
+  function tokenRequest(params) {
+    params.client_id = DBX_KEY;
+    return fetch('https://api.dropboxapi.com/oauth2/token', { method: 'POST', body: new URLSearchParams(params) })
+      .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); })
+      .then(function (j) {
+        dbx = { access: j.access_token, refresh: j.refresh_token || (dbx && dbx.refresh), exp: Date.now() + (j.expires_in - 60) * 1000 };
+        save('rsvp.dbx', dbx);
+        dbxMode = '接続済み';
+      });
+  }
+  // Dropbox の接続画面から戻ってきたとき（?code=…）の処理
+  function dbxHandleRedirect() {
+    var q = new URLSearchParams(location.search);
+    if (!q.has('code') && !q.has('error')) return Promise.resolve();
+    history.replaceState(null, '', DBX_REDIRECT);
+    var p = load('rsvp.dbx.pkce');
+    localStorage.removeItem('rsvp.dbx.pkce');
+    if (q.has('error')) { dbxMode = '接続されませんでした（' + (q.get('error_description') || q.get('error')) + '）'; return Promise.resolve(); }
+    if (!p || p.state !== q.get('state')) { dbxMode = '接続に失敗しました（確認用の値が一致しません。もう一度接続してください）'; return Promise.resolve(); }
+    return tokenRequest({ code: q.get('code'), grant_type: 'authorization_code', code_verifier: p.verifier, redirect_uri: DBX_REDIRECT })
+      .catch(function (e) { dbx = null; dbxMode = '接続に失敗しました：' + e.message; });
+  }
+  function dbxToken() {
+    if (!dbx) return Promise.reject(new Error('Dropbox に接続していません'));
+    if (Date.now() < dbx.exp) return Promise.resolve(dbx.access);
+    return tokenRequest({ grant_type: 'refresh_token', refresh_token: dbx.refresh }).then(function () { return dbx.access; })
+      .catch(function (e) { dbxDisconnected('接続が切れました。もう一度接続してください（' + e.message + '）'); throw e; });
+  }
+  function dbxDisconnected(msg) { dbx = null; localStorage.removeItem('rsvp.dbx'); remoteMarks = null; dbxMode = msg; renderDbx(); }
+  // HTTP ヘッダーに入れる JSON は ASCII にする（日本語のファイル名を \uXXXX にする）
+  function headerJson(o) { return JSON.stringify(o).replace(/[\u007f-￿]/g, function (c) { return '\\u' + ('000' + c.charCodeAt(0).toString(16)).slice(-4); }); }
+  function dbxFetch(url, init) {
+    return dbxToken().then(function (t) {
+      init.headers = Object.assign({ Authorization: 'Bearer ' + t }, init.headers);
+      return fetch(url, init);
+    }).then(function (r) {
+      if (r.status === 401) { dbxDisconnected('接続が切れました。もう一度接続してください'); throw new Error('401'); }
+      return r;
+    });
+  }
+  function dbxRpc(path, body) {
+    return dbxFetch('https://api.dropboxapi.com/2/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); });
+  }
+  function dbxDownload(path) {  // ファイルがなければ null
+    return dbxFetch('https://content.dropboxapi.com/2/files/download', { method: 'POST', headers: { 'Dropbox-API-Arg': headerJson({ path: path }) } })
+      .then(function (r) {
+        if (r.status === 409) return null;
+        return r.ok ? r.arrayBuffer() : r.text().then(function (t) { throw new Error(r.status + ' ' + t); });
+      });
+  }
+  function dbxUpload(path, text, keepalive) {
+    return dbxFetch('https://content.dropboxapi.com/2/files/upload', { method: 'POST', keepalive: !!keepalive,
+      headers: { 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': headerJson({ path: path, mode: 'overwrite', mute: true }) },
+      body: new TextEncoder().encode(text) })
+      .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); });
+  }
+
+  // 作品一覧（専用フォルダーの中の zip / txt。下のフォルダーも含む）
+  function listWorks() {
+    var all = [];
+    function more(res) {
+      all = all.concat(res.entries);
+      return res.has_more ? dbxRpc('files/list_folder/continue', { cursor: res.cursor }).then(more) : all;
+    }
+    return dbxRpc('files/list_folder', { path: '', recursive: true }).then(more).then(function (es) {
+      return es.filter(function (e) { return e['.tag'] === 'file' && /\.(zip|txt)$/i.test(e.name); })
+        .sort(function (a, b) { return a.path_display.localeCompare(b.path_display, 'ja'); });
+    });
+  }
+  function renderDbx() {
+    var box = $('dbxBox');
+    box.innerHTML = '';
+    if (FILE_MODE) { box.innerHTML = '<p class="note">ファイルを直接開いているときは使えません。URL で開いてください。</p>'; return; }
+    if (!dbx) {
+      var p = document.createElement('p'); p.className = 'note';
+      p.textContent = dbxMode === '未接続' ? '接続すると、Dropbox の「アプリ」フォルダーの中にある、このアプリ専用のフォルダーの作品を開けます。読んだ位置（栞）もそこに保存され、他の端末と共有されます。' : dbxMode;
+      var b = document.createElement('button'); b.textContent = 'Dropbox に接続'; b.onclick = dbxConnect;
+      box.appendChild(p); box.appendChild(b);
+      return;
+    }
+    var list = document.createElement('div'); list.className = 'dbxList'; list.textContent = '一覧を読み込み中…';
+    var bar = document.createElement('div'); bar.className = 'row';
+    var re = document.createElement('button'); re.textContent = '一覧を更新'; re.onclick = renderDbx;
+    var off = document.createElement('button'); off.textContent = '接続を解除';
+    off.onclick = function () {
+      dbxRpc('auth/token/revoke', null).catch(function () {});
+      dbxDisconnected('未接続');
+    };
+    bar.appendChild(re); bar.appendChild(off);
+    box.appendChild(list); box.appendChild(bar);
+    Promise.all([listWorks(), loadRemoteMarks().catch(function () { return null; })]).then(function (r) {
+      var files = r[0];
+      list.textContent = '';
+      if (!files.length) { list.innerHTML = '<p class="note">専用フォルダーに zip / txt がありません。Dropbox の「アプリ」フォルダーの中の、このアプリのフォルダーに置いてください。</p>'; return; }
+      files.forEach(function (f) {
+        var b = document.createElement('button');
+        b.textContent = f.path_display.replace(/^\//, '');
+        b.onclick = function () {
+          $('msg').textContent = '読み込み中…';
+          dbxDownload(f.path_lower).then(function (buf) {
+            if (!buf) throw new Error('ファイルが見つかりません');
+            openBytes(buf, f.name.replace(/\.(zip|txt)$/i, ''));
+          }).catch(function (e) { $('msg').textContent = 'Dropbox から読み込めませんでした：' + e.message; });
+        };
+        list.appendChild(b);
+      });
+    }).catch(function (e) { list.textContent = '一覧を読み込めませんでした：' + e.message; });
+  }
+
+  // ---- 栞（Dropbox の bookmarks.json に作品ごとの位置を保存） ----
+  function loadRemoteMarks() {
+    return dbxDownload(MARKS_PATH).then(function (b) {
+      var j = b ? JSON.parse(new TextDecoder().decode(b)) : {};
+      if (!j.works) j.works = {};
+      remoteMarks = j;
+      return j;
+    });
+  }
+  function fmtAt(t) { var d = new Date(t); return (d.getMonth() + 1) + '/' + d.getDate() + ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  // この端末の位置を Dropbox へ。keepalive はページを閉じる直前用（読み直さずに手元の写しへ書き足す）
+  function syncMark(keepalive) {
+    if (!dbx || !work) return;
+    var m = localMark(work.id);
+    if (!m.at) return;
+    var entry = { pos: m.pos, at: m.at, total: totalChars, title: work.title, device: deviceName() };
+    function put(marks) {
+      var r = marks.works[work.id];
+      if (r && r.at >= m.at) return;  // Dropbox 側のほうが新しい、または同じ
+      marks.works[work.id] = entry;
+      return dbxUpload(MARKS_PATH, JSON.stringify(marks), keepalive);
+    }
+    var p = keepalive && remoteMarks ? Promise.resolve(put(remoteMarks)) : loadRemoteMarks().then(put);
+    p.then(function () { dbxMode = '接続済み（栞を保存 ' + fmtAt(Date.now()) + '）'; })
+      .catch(function (e) { dbxMode = '接続済み（栞の保存に失敗：' + e.message + '）'; });
+  }
+  // 他の端末のほうが新しい位置なら、そこから再開するか尋ねる
+  function checkRemoteMark() {
+    if (!dbx || !work) return;
+    var id = work.id;
+    loadRemoteMarks().then(function (marks) {
+      if (!work || work.id !== id || playing) return;
+      var r = marks.works[id], m = localMark(id);
+      if (!r || r.at <= m.at || r.pos === (units[idx] ? units[idx].start : 0)) return;
+      $('syncText').textContent = r.device + '（' + fmtAt(r.at) + '）で ' + (r.pos + 1).toLocaleString() + '字目まで読んでいます';
+      $('syncGo').onclick = function () {
+        idx = indexForChar(r.pos); render(); flushPos();
+        $('sync').hidden = true;
+      };
+      $('syncNo').onclick = function () { $('sync').hidden = true; };
+      $('sync').hidden = false;
+    }).catch(function () {});
+  }
+
+  // ---- 位置へ移動（段落・字数） ----
+  function openJump() {
+    if (!units.length) return;
+    if (playing) stop();
+    var u = units[idx], paras = units[units.length - 1].para + 1;
+    $('jumpPara').max = paras; $('jumpPara').value = u.para + 1; $('jumpParaMax').textContent = '／' + paras + '段落';
+    $('jumpChar').max = totalChars; $('jumpChar').value = u.start + 1; $('jumpCharMax').textContent = '／' + totalChars.toLocaleString() + '字';
+    $('dlgJump').showModal();
+  }
+  function jumpTo(i) { idx = Math.max(0, Math.min(units.length - 1, i)); render(); flushPos(); $('dlgJump').close(); }
+  $('pos').addEventListener('click', openJump);
+  $('btnJumpPara').addEventListener('click', function () {
+    var n = Math.round(Number($('jumpPara').value)) - 1;
+    for (var i = 0; i < units.length; i++) if (units[i].para >= n) return jumpTo(i);
+    jumpTo(units.length - 1);
+  });
+  $('btnJumpChar').addEventListener('click', function () { jumpTo(indexForChar(Math.round(Number($('jumpChar').value)) - 1)); });
+  $('btnJumpClose').addEventListener('click', function () { $('dlgJump').close(); });
+  window.addEventListener('pagehide', function () { flushPos(); syncMark(true); });
 
   // ---- 作品を開く ----
   function hashId(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0; return h.toString(36) + '_' + s.length; }
@@ -472,17 +714,20 @@ if (typeof module !== 'undefined') module.exports = Core;
     var paragraphs = Core.cleanAozora(text, gaiji);
     if (!paragraphs.length) { $('msg').textContent = '本文が見つかりませんでした。'; return; }
     if (playing) stop();
+    if (work) { flushPos(); syncMark(); }
     var title = paragraphs.length > 2 && paragraphs[0].length < 40 && paragraphs[1].length < 30 ? paragraphs[0] + '　' + paragraphs[1] : fallbackTitle;
     work = { id: hashId(paragraphs.join('\n')), title: title, paragraphs: paragraphs };
     $('title').textContent = title;
     document.title = title + ' — RSVP速読';
     save('rsvp.last', { title: title, paragraphs: paragraphs.length > 3000 ? null : paragraphs });
-    var pos = load('rsvp.pos.' + work.id) || 0;
+    var pos = localMark(work.id).pos;
+    $('sync').hidden = true;
     rebuild(pos);
     $('hint').textContent = pos ? '前回の続きから（' + (units[idx].start + 1) + '字目）' : '中央をタップ、または Space で再生';
     $('msg').textContent = '';
     if ($('dlgOpen').open) $('dlgOpen').close();
     updateStatus();
+    checkRemoteMark();
   }
   function openBytes(buf, name) {
     var u8 = new Uint8Array(buf);
@@ -512,7 +757,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   });
 
   // ---- 操作 ----
-  $('btnOpen').addEventListener('click', function () { if (playing) stop(); $('dlgOpen').showModal(); });
+  $('btnOpen').addEventListener('click', function () { if (playing) stop(); renderDbx(); $('dlgOpen').showModal(); });
   $('btnOpenClose').addEventListener('click', function () { $('dlgOpen').close(); });
   $('btnSettings').addEventListener('click', function () { if (playing) stop(); updateStatus(); showRuns(); $('dlgSettings').showModal(); });
   $('btnSettingsClose').addEventListener('click', function () { $('dlgSettings').close(); });
@@ -580,6 +825,8 @@ if (typeof module !== 'undefined') module.exports = Core;
   bindNum('maxLen', 'maxLen', true);
   bindNum('pauseComma', 'pauseComma', false);
   bindNum('pausePeriod', 'pausePeriod', false);
+  $('device').value = deviceName();
+  $('device').addEventListener('change', function () { settings.device = $('device').value.trim(); save('rsvp.settings', settings); updateStatus(); });
   window.addEventListener('resize', function () { fitSize(); updateStatus(); });
 
   // ---- 起動 ----
@@ -597,7 +844,7 @@ if (typeof module !== 'undefined') module.exports = Core;
       gaijiMode = '表を読み込めませんでした（外字は取り除きます）：' + (FILE_MODE ? 'ファイルを直接開いているため。URL で開くと使えます' : e.message);
     });
 
-  Promise.all([budoux, gaijiLoad]).then(function () {
+  Promise.all([budoux, gaijiLoad, dbxHandleRedirect()]).then(function () {
     var last = load('rsvp.last');
     if (last && last.paragraphs) openText(last.paragraphs.join('\n'), last.title);
     else if (FILE_MODE) { $('hint').textContent = ''; $('msg').textContent = FILE_MSG; $('dlgOpen').showModal(); }
