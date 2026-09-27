@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f7f5ef">
+<title>RSVP速読</title>
+<style>
+  :root {
+    --bg: #f7f5ef; --fg: #1d1b18; --muted: #77716a; --line: #c9453a;
+    --panel: #ffffff; --border: #ddd8cf; --accent: #2f5d8a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16150f; --fg: #ece8df; --muted: #9a948a; --line: #e0675b;
+            --panel: #211f19; --border: #3a372f; --accent: #7fb0e0; }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  body { display: flex; flex-direction: column; height: 100dvh;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; flex: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  button { font: inherit; font-size: 14px; color: var(--fg); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:active { opacity: .7; }
+
+  /* 表示部 */
+  #stage { flex: 1; position: relative; overflow: hidden; touch-action: pan-y; user-select: none;
+    -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
+  .mark { position: absolute; left: 50%; width: 0; border-left: 2px solid var(--line); transform: translateX(-1px); }
+  #markTop { bottom: calc(50% + 0.9em); height: 1.2em; }
+  #markBottom { top: calc(50% + 0.9em); height: 1.2em; }
+  #word { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+    text-align: center; white-space: nowrap; line-height: 1.2;
+    font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Yu Mincho", "YuMincho", "BIZ UDPMincho", "MS PMincho", serif; }
+  #hint { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: var(--muted); }
+
+  /* 下部 */
+  footer { padding: 8px 16px 12px; border-top: 1px solid var(--border); }
+  #bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; cursor: pointer; }
+  #barFill { height: 100%; width: 0; background: var(--accent); }
+  #stats { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted);
+    margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
+  #controls { display: flex; gap: 8px; justify-content: center; }
+  #controls button { min-width: 56px; }
+  .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 13px; }
+  .row label { white-space: nowrap; min-width: 5.5em; }
+  .row input[type=range] { flex: 1; min-width: 0; }
+  .row output { min-width: 5.5em; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* パネル */
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--fg);
+    width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 16px; }
+  dialog::backdrop { background: rgba(0,0,0,.4); }
+  dialog h2 { font-size: 16px; margin: 0 0 12px; }
+  dialog h3 { font-size: 14px; margin: 16px 0 6px; }
+  dialog textarea { width: 100%; height: 120px; font: inherit; font-size: 14px; background: var(--bg);
+    color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 8px; }
+  dialog input[type=number] { width: 5em; font: inherit; font-size: 14px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+  .note { font-size: 12px; color: var(--muted); margin: 4px 0; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+  #msg { font-size: 13px; color: var(--line); min-height: 1em; }
+  #unitList { font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif; font-size: 14px;
+    max-height: 40vh; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px; margin: 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">RSVP速読</h1>
+  <button id="btnOpen">作品</button>
+  <button id="btnSettings">設定</button>
+</header>
+
+<div id="stage" aria-live="off">
+  <div class="mark" id="markTop"></div>
+  <div id="word"></div>
+  <div class="mark" id="markBottom"></div>
+  <div id="hint"></div>
+</div>
+
+<footer>
+  <div id="bar" title="クリックで移動"><div id="barFill"></div></div>
+  <div id="stats"><span id="pos">—</span><span id="remain">—</span></div>
+  <div id="controls">
+    <button id="btnPara" title="段落の頭へ（Shift+←）">⇤段落</button>
+    <button id="btnPrev" title="1単位戻る（←）">◀</button>
+    <button id="btnPlay" title="再生・停止（Space）">再生</button>
+    <button id="btnNext" title="1単位進む（→）">▶</button>
+  </div>
+  <div class="row"><label for="speed">速度</label><input type="range" id="speed" min="300" max="2000" step="50"><output id="speedOut"></output></div>
+  <div class="row"><label for="size">文字サイズ</label><input type="range" id="size" min="16" max="72" step="2"><output id="sizeOut"></output></div>
+</footer>
+
+<dialog id="dlgOpen">
+  <h2>作品を開く</h2>
+  <h3>同梱の作品</h3>
+  <button id="btnKumo">芥川龍之介「蜘蛛の糸」</button>
+  <h3>青空文庫のファイル（zip / txt）</h3>
+  <input type="file" id="file">
+  <p class="note">iPhone では「ファイル」アプリから選べます。文字コードは UTF-8 / Shift_JIS を自動で判定します。</p>
+  <h3>文章を貼り付け</h3>
+  <textarea id="paste" placeholder="ここに文章を貼り付け"></textarea>
+  <button id="btnPaste">この文章を読む</button>
+  <p id="msg"></p>
+  <div class="actions"><button id="btnOpenClose">閉じる</button></div>
+</dialog>
+
+<dialog id="dlgSettings">
+  <h2>設定</h2>
+  <div class="row"><label for="minLen">最小文字数</label><input type="number" id="minLen" min="1" max="8"> 字未満は次と結合</div>
+  <div class="row"><label for="maxLen">最大文字数</label><input type="number" id="maxLen" min="6" max="30"> 字を超えたら分割</div>
+  <div class="row"><label for="pauseComma">読点の後</label><input type="number" id="pauseComma" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
+  <div class="row"><label for="pausePeriod">句点の後</label><input type="number" id="pausePeriod" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
+  <h3>状態</h3>
+  <p class="note" id="status"></p>
+  <h3>前回の計測（最後まで再生したとき）</h3>
+  <p class="note" id="lastRun">まだありません</p>
+  <h3>冒頭30単位</h3>
+  <pre id="unitList"></pre>
+  <div class="actions"><button id="btnSettingsClose">閉じる</button></div>
+</dialog>
+
+<!-- 文章処理の中核。tools/check.mjs もこのブロックを読み込んで使う -->
+<script id="core">
+var Core = (function () {
+  var CLOSERS = '、。，．,.」』）)】〕〉》］]｝}！？!?…‥ー～ゝゞヽヾ々ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮヵヶ';
+  var PUNCT = '、。，．,.」』）)】〕〉》］]｝}！？!?…‥―─・：；';
+  var OPENERS = '「『（(【〔〈《［[｛{';
+  var COMMA = '、，,';
+  var PERIOD = '。．.！？!?';
+
+  function len(s) { return Array.from(s).length; }
+
+  // 青空文庫の注記 ［＃…］ を入れ子も含めて取り除く。直前の外字記号「※」も一緒に消す。
+  // 外字は、注記の U+XXXX か、面区点番号（第3水準1-87-71 など）を gaiji 表で引いて置き換える。引けなければ消す。
+  function stripAnnotations(s, gaiji) {
+    var out = '';
+    var i = 0;
+    while (i < s.length) {
+      if (s[i] === '［' && s[i + 1] === '＃') {
+        var depth = 0, j = i;
+        for (; j < s.length; j++) {
+          if (s[j] === '［') depth++;
+          else if (s[j] === '］') { depth--; if (depth === 0) break; }
+          else if (s[j] === '\n') break;
+        }
+        var note = s.slice(i, j + 1);
+        if (out.endsWith('※')) {
+          out = out.slice(0, -1);
+          var m = note.match(/U\+([0-9A-Fa-f]{4,6})/);
+          var g = note.match(/水準([12]-\d{1,2}-\d{1,2})/);
+          if (m) out += String.fromCodePoint(parseInt(m[1], 16));
+          else if (g && gaiji && gaiji[g[1]]) out += gaiji[g[1]];
+        }
+        i = j + 1;
+      } else {
+        out += s[i];
+        i++;
+      }
+    }
+    return out;
+  }
+
+  // 青空文庫の本文から、記号説明・底本情報・ルビ・注記を取り除き、段落の配列を返す
+  function cleanAozora(raw, gaiji) {
+    var s = raw.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    var lines = s.split('\n');
+    // 冒頭の「-------」で挟まれた記号説明ブロック（先頭40行以内にあるときだけ）
+    var first = -1, second = -1;
+    for (var k = 0; k < Math.min(lines.length, 40); k++) {
+      if (/^-{10,}\s*$/.test(lines[k])) { if (first < 0) first = k; else { second = k; break; } }
+    }
+    if (first >= 0 && second > first) lines.splice(first, second - first + 1);
+    // 末尾の「底本：」以降
+    for (var b = lines.length - 1; b >= 0; b--) {
+      if (/^底本[：:]/.test(lines[b])) { lines = lines.slice(0, b); break; }
+    }
+    s = lines.join('\n');
+    s = stripAnnotations(s, gaiji);
+    s = s.replace(/《[^《》\n]*》/g, '').replace(/｜/g, '');
+    return s.split('\n')
+      .map(function (p) { return p.replace(/^[\s　]+|[\s　]+$/g, ''); })
+      .filter(function (p) { return p.length > 0; });
+  }
+
+  // BudouX が使えないときの簡易分割：句読点の後と、漢字・カタカナに続く助詞の後で区切る
+  var PARTICLES = ['から', 'まで', 'より', 'ので', 'のに', 'けれど', 'ながら', 'は', 'が', 'を', 'に', 'で', 'と', 'も', 'へ', 'の', 'や', 'て'];
+  function isHira(c) { return c >= 'ぁ' && c <= 'ゟ'; }
+  function fallbackSplit(p) {
+    var chars = Array.from(p), out = [], cur = '';
+    for (var i = 0; i < chars.length; i++) {
+      cur += chars[i];
+      var next = chars[i + 1];
+      if (next === undefined) break;
+      if (PUNCT.indexOf(chars[i]) >= 0 && PUNCT.indexOf(next) < 0) { out.push(cur); cur = ''; continue; }
+      if (isHira(next) || PUNCT.indexOf(next) >= 0) continue;
+      for (var q = 0; q < PARTICLES.length; q++) {
+        var pt = PARTICLES[q];
+        if (cur.endsWith(pt) && cur.length > pt.length && !isHira(cur[cur.length - pt.length - 1])) {
+          out.push(cur); cur = ''; break;
+        }
+      }
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function isPunctOnly(t) { return Array.from(t).every(function (c) { return PUNCT.indexOf(c) >= 0 || OPENERS.indexOf(c) >= 0; }); }
+
+  // 長い単位を maxLen 以下に分ける（なるべく均等に。句読点は前に付けたまま）
+  function splitLong(t, maxLen) {
+    var chars = Array.from(t);
+    if (chars.length <= maxLen) return [t];
+    var n = Math.ceil(chars.length / maxLen), size = Math.ceil(chars.length / n), out = [], i = 0;
+    while (i < chars.length) {
+      var end = Math.min(chars.length, i + size);
+      // 次の片が句読点・小書き文字で始まらないように後ろへずらす（最大文字数を超えない範囲で）
+      while (end < chars.length && CLOSERS.indexOf(chars[end]) >= 0 && end - i < maxLen) end++;
+      // 開き括弧で終わらないように前へずらす
+      while (end - 1 > i && OPENERS.indexOf(chars[end - 1]) >= 0) end--;
+      out.push(chars.slice(i, end).join(''));
+      i = end;
+    }
+    return out;
+  }
+
+  // 段落の配列から表示単位を作る
+  // opts: { minLen, maxLen, segment(p) -> string[] }
+  function buildUnits(paragraphs, opts) {
+    var units = [], offset = 0;
+    paragraphs.forEach(function (p, pi) {
+      var chunks = opts.segment(p).filter(function (c) { return c.length > 0; });
+      // 句読点・閉じ括弧で始まる片は、その部分を直前の片へ移す
+      var a = [];
+      chunks.forEach(function (c) {
+        var cs = Array.from(c), k = 0;
+        while (a.length && k < cs.length && CLOSERS.indexOf(cs[k]) >= 0 && PUNCT.indexOf(cs[k]) >= 0) k++;
+        if (k > 0) { a[a.length - 1] += cs.slice(0, k).join(''); c = cs.slice(k).join(''); }
+        if (c) a.push(c);
+      });
+      // 開き括弧で終わる片は、その括弧を次の片へ移す
+      for (var i = 0; i < a.length - 1; i++) {
+        var m = a[i].match(/[「『（(【〔〈［\[｛{]+$/);
+        if (m && m[0].length < a[i].length) { a[i] = a[i].slice(0, -m[0].length); a[i + 1] = m[0] + a[i + 1]; }
+      }
+      // 最小文字数未満は次と結合（最大文字数を超えるなら前との結合を試す）
+      var b = [];
+      for (var j = 0; j < a.length; j++) {
+        var t = a[j];
+        while (len(t) < opts.minLen && j + 1 < a.length && len(t) + len(a[j + 1]) <= opts.maxLen) { t += a[++j]; }
+        if (len(t) < opts.minLen && b.length && len(b[b.length - 1]) + len(t) <= opts.maxLen) { b[b.length - 1] += t; continue; }
+        if (len(t) < opts.minLen && j + 1 < a.length) { t += a[++j]; }
+        b.push(t);
+      }
+      // 長すぎる単位を分割
+      var c2 = [];
+      b.forEach(function (t) { splitLong(t, opts.maxLen).forEach(function (x) { c2.push(x); }); });
+      c2.forEach(function (t, ui) {
+        var n = len(t);
+        units.push({ text: t, para: pi, paraStart: ui === 0, start: offset, len: n });
+        offset += n;
+      });
+    });
+    return units;
+  }
+
+  // 単位の後ろの休止：閉じ括弧を除いた最後の文字で判定
+  function pauseKind(t) {
+    var s = t.replace(/[」』）)】〕〉》］\]｝}]+$/, '');
+    var c = s.slice(-1);
+    if (PERIOD.indexOf(c) >= 0 || (s.length < t.length && c !== '、')) return 'period';
+    if (COMMA.indexOf(c) >= 0) return 'comma';
+    return '';
+  }
+
+  // 1単位の表示時間（ミリ秒）
+  function duration(unit, o) {
+    var d = Math.max(120, unit.len * 60000 / o.speed);
+    var k = pauseKind(unit.text);
+    if (k === 'comma') d += o.pauseComma;
+    if (k === 'period') d += o.pausePeriod;
+    return d;
+  }
+
+  // 本文の文字コードを判定して文字列にする（UTF-8 として正しくなければ Shift_JIS）
+  function decode(bytes) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+    catch (e) { return new TextDecoder('shift_jis').decode(bytes); }
+  }
+
+  return { cleanAozora: cleanAozora, stripAnnotations: stripAnnotations, fallbackSplit: fallbackSplit,
+    buildUnits: buildUnits, duration: duration, pauseKind: pauseKind, decode: decode,
+    isPunctOnly: isPunctOnly, len: len };
+})();
+if (typeof module !== 'undefined') module.exports = Core;
+</script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" defer></script>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var DEFAULTS = { speed: 600, size: 36, minLen: 3, maxLen: 12, pauseComma: 150, pausePeriod: 300 };
+  var settings = Object.assign({}, DEFAULTS, load('rsvp.settings') || {});
+  var parser = null;           // BudouX の日本語パーサー
+  var segMode = '読み込み中';
+  var gaiji = null, gaijiMode = '読み込み中';  // 外字の面区点番号 → 文字
+  // ファイルとして直接開いたとき（file://）は、ブラウザーが同じフォルダーのファイル読み込みを禁止する
+  var FILE_MODE = location.protocol === 'file:';
+  var FILE_MSG = 'ファイルを直接開くと、同梱の作品を読めません。URL（http://… または https://…）で開いてください。ファイルを選ぶ方法と貼り付ける方法は使えます。';
+  var work = null;             // { id, title, paragraphs }
+  var units = [], idx = 0, totalChars = 0;
+  var playing = false, timer = null, nextAt = 0;
+  var run = null;              // 最後まで再生したときの計測 { startAt, predicted, startIdx, speed }
+  var wakeLock = null, wakeStatus = navigator.wakeLock ? '使えます（再生中に有効化）' : '非対応（このブラウザーでは画面の消灯を防げません）';
+
+  function load(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }
+  function save(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+
+  // ---- 表示単位 ----
+  function segment(p) { return parser ? parser.parse(p) : Core.fallbackSplit(p); }
+  function rebuild(keepChar) {
+    if (!work) return;
+    units = Core.buildUnits(work.paragraphs, { minLen: settings.minLen, maxLen: settings.maxLen, segment: segment });
+    totalChars = units.length ? units[units.length - 1].start + units[units.length - 1].len : 0;
+    idx = indexForChar(keepChar || 0);
+    fitSize();
+    render();
+    $('unitList').textContent = units.slice(0, 30).map(function (u, i) {
+      return String(i + 1).padStart(2, ' ') + '  ' + u.text + '（' + u.len + '字）';
+    }).join('\n');
+  }
+  function indexForChar(c) {
+    for (var i = 0; i < units.length; i++) if (units[i].start + units[i].len > c) return i;
+    return Math.max(0, units.length - 1);
+  }
+
+  // 最も長い単位が画面幅で1行に収まるよう、文字サイズの上限を決める
+  var fitted = 0;
+  function fitSize() {
+    var maxN = 0;
+    units.forEach(function (u) { if (u.len > maxN) maxN = u.len; });
+    var avail = $('stage').clientWidth - 32;
+    fitted = Math.min(settings.size, Math.floor(avail / Math.max(1, maxN)));
+    $('word').style.fontSize = $('markTop').style.fontSize = $('markBottom').style.fontSize = fitted + 'px';
+    $('sizeOut').textContent = settings.size + 'px' + (fitted < settings.size ? '（' + fitted + '）' : '');
+  }
+
+  // ---- 表示 ----
+  function opts() { return { speed: settings.speed, pauseComma: settings.pauseComma, pausePeriod: settings.pausePeriod }; }
+  function remainingMs(from) {
+    var o = opts(), t = 0;
+    for (var i = from; i < units.length; i++) t += Core.duration(units[i], o);
+    return t;
+  }
+  function fmt(ms) {
+    var s = Math.round(ms / 1000), m = Math.floor(s / 60);
+    return m + '分' + String(s % 60).padStart(2, '0') + '秒';
+  }
+  function render() {
+    var u = units[idx];
+    $('word').textContent = u ? u.text : '';
+    var done = u ? u.start + u.len : 0;
+    $('barFill').style.width = totalChars ? (done / totalChars * 100) + '%' : '0';
+    $('pos').textContent = u ? totalChars.toLocaleString() + '字中 ' + done.toLocaleString() + '字目' : '—';
+    $('remain').textContent = u ? '残り ' + fmt(remainingMs(playing ? idx + 1 : idx)) : '—';
+    $('btnPlay').textContent = playing ? '停止' : '再生';
+    if (work && u) savePos();
+  }
+  var saveTimer = null;
+  function savePos() {
+    if (saveTimer) return;
+    saveTimer = setTimeout(function () { saveTimer = null; if (work && units[idx]) save('rsvp.pos.' + work.id, units[idx].start); }, 500);
+  }
+
+  // ---- 再生 ----
+  // 予定時刻を積み上げて次の表示を決める（setTimeout の遅れが積み重ならないように）
+  function tick() {
+    var now = performance.now();
+    if (idx >= units.length - 1) { finish(now); return; }
+    idx++;
+    render();
+    nextAt += Core.duration(units[idx], opts());
+    timer = setTimeout(tick, Math.max(0, nextAt - performance.now()));
+  }
+  function play() {
+    if (!units.length || playing) return;
+    if (idx >= units.length - 1) idx = 0;
+    playing = true;
+    $('hint').textContent = '';
+    var now = performance.now();
+    run = { startAt: now, predicted: remainingMs(idx), startIdx: idx, speed: settings.speed, sig: sig() };
+    render();
+    nextAt = now + Core.duration(units[idx], opts());
+    timer = setTimeout(tick, Math.max(0, nextAt - now));
+    requestWake();
+  }
+  function stop() {
+    playing = false;
+    clearTimeout(timer); timer = null;
+    run = null;
+    releaseWake();
+    render();
+  }
+  function finish(now) {
+    var r = run;
+    playing = false; timer = null; run = null;
+    releaseWake();
+    render();
+    if (r && r.startIdx === 0 && r.sig === sig()) {
+      var actual = now - r.startAt;
+      var rec = { at: new Date().toLocaleString('ja-JP'), title: work.title, speed: r.speed,
+        predicted: Math.round(r.predicted), actual: Math.round(actual),
+        diffPct: Math.round((actual - r.predicted) / r.predicted * 10000) / 100, ua: navigator.userAgent };
+      var hist = load('rsvp.runs') || [];
+      hist.unshift(rec); save('rsvp.runs', hist.slice(0, 20));
+      showRuns();
+      $('hint').textContent = '最後まで表示しました（予測 ' + fmt(rec.predicted) + '／実際 ' + fmt(rec.actual) + '／差 ' + rec.diffPct + '%）';
+    }
+  }
+  // 途中で設定を変えた計測は記録しない
+  function sig() { return [settings.speed, settings.pauseComma, settings.pausePeriod, settings.minLen, settings.maxLen, units.length].join(','); }
+  function showRuns() {
+    var hist = load('rsvp.runs') || [];
+    $('lastRun').innerHTML = hist.length ? hist.slice(0, 6).map(function (r) {
+      return r.at + '　' + r.title + '　' + r.speed + '字/分：予測 ' + fmt(r.predicted) + '／実際 ' + fmt(r.actual) + '／差 ' + r.diffPct + '%';
+    }).join('<br>') : 'まだありません';
+  }
+  function toggle() { playing ? stop() : play(); }
+  function step(d) {
+    var wasPlaying = playing; if (playing) stop();
+    idx = Math.max(0, Math.min(units.length - 1, idx + d));
+    render();
+    if (wasPlaying) play();
+  }
+  function paraHead() {
+    var wasPlaying = playing; if (playing) stop();
+    var i = idx;
+    while (i > 0 && !units[i].paraStart) i--;
+    if (i === idx && i > 0) { i--; while (i > 0 && !units[i].paraStart) i--; }  // すでに頭なら前の段落へ
+    idx = i; render();
+    if (wasPlaying) play();
+  }
+
+  // ---- 画面の消灯防止 ----
+  function requestWake() {
+    if (!navigator.wakeLock) { updateStatus(); return; }
+    navigator.wakeLock.request('screen').then(function (l) {
+      wakeLock = l; wakeStatus = '有効（再生中）';
+      l.addEventListener('release', function () { if (wakeLock === l) { wakeLock = null; wakeStatus = '解除済み'; updateStatus(); } });
+      updateStatus();
+    }).catch(function (e) { wakeStatus = '失敗：' + e.name + ' ' + e.message; updateStatus(); });
+  }
+  function releaseWake() { if (wakeLock) { var l = wakeLock; wakeLock = null; l.release(); wakeStatus = '解除済み'; updateStatus(); } }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible' && playing && !wakeLock) requestWake();
+    if (document.visibilityState === 'hidden' && playing) stop();
+  });
+  function updateStatus() {
+    $('status').innerHTML = '区切り処理：' + segMode + '<br>外字：' + gaijiMode + '<br>zip 展開：' + (window.JSZip ? '使えます' : '読み込めていません') +
+      '<br>画面の消灯防止：' + wakeStatus + '<br>表示単位：' + units.length + '個　最長 ' +
+      units.reduce(function (m, u) { return Math.max(m, u.len); }, 0) + '字　文字サイズ ' + fitted + 'px';
+  }
+
+  // ---- 作品を開く ----
+  function hashId(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0; return h.toString(36) + '_' + s.length; }
+  function openText(text, fallbackTitle) {
+    var paragraphs = Core.cleanAozora(text, gaiji);
+    if (!paragraphs.length) { $('msg').textContent = '本文が見つかりませんでした。'; return; }
+    if (playing) stop();
+    var title = paragraphs.length > 2 && paragraphs[0].length < 40 && paragraphs[1].length < 30 ? paragraphs[0] + '　' + paragraphs[1] : fallbackTitle;
+    work = { id: hashId(paragraphs.join('\n')), title: title, paragraphs: paragraphs };
+    $('title').textContent = title;
+    document.title = title + ' — RSVP速読';
+    save('rsvp.last', { title: title, paragraphs: paragraphs.length > 3000 ? null : paragraphs });
+    var pos = load('rsvp.pos.' + work.id) || 0;
+    rebuild(pos);
+    $('hint').textContent = pos ? '前回の続きから（' + (units[idx].start + 1) + '字目）' : '中央をタップ、または Space で再生';
+    $('msg').textContent = '';
+    if ($('dlgOpen').open) $('dlgOpen').close();
+    updateStatus();
+  }
+  function openBytes(buf, name) {
+    var u8 = new Uint8Array(buf);
+    var isZip = u8[0] === 0x50 && u8[1] === 0x4B;
+    if (!isZip) { openText(Core.decode(u8), name); return; }
+    if (!window.JSZip) { $('msg').textContent = 'zip を展開する部品が読み込めていません。通信状態を確かめるか、txt を選んでください。'; return; }
+    JSZip.loadAsync(u8).then(function (zip) {
+      var f = Object.keys(zip.files).filter(function (n) { return /\.txt$/i.test(n) && !zip.files[n].dir; })[0];
+      if (!f) throw new Error('zip の中に txt がありません');
+      return zip.files[f].async('uint8array');
+    }).then(function (b) { openText(Core.decode(b), name); })
+      .catch(function (e) { $('msg').textContent = '読み込めませんでした：' + e.message; });
+  }
+  $('file').addEventListener('change', function (e) {
+    var f = e.target.files[0]; if (!f) return;
+    f.arrayBuffer().then(function (b) { openBytes(b, f.name.replace(/\.(zip|txt)$/i, '')); });
+    e.target.value = '';
+  });
+  $('btnKumo').addEventListener('click', function () {
+    fetch('texts/kumo_no_ito.txt').then(function (r) { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(function (b) { openBytes(b, '蜘蛛の糸'); })
+      .catch(function (e) { $('msg').textContent = FILE_MODE ? FILE_MSG : '同梱の作品を読み込めませんでした：' + e.message; });
+  });
+  $('btnPaste').addEventListener('click', function () {
+    var t = $('paste').value.trim(); if (!t) return;
+    openText(t, '貼り付けた文章');
+  });
+
+  // ---- 操作 ----
+  $('btnOpen').addEventListener('click', function () { if (playing) stop(); $('dlgOpen').showModal(); });
+  $('btnOpenClose').addEventListener('click', function () { $('dlgOpen').close(); });
+  $('btnSettings').addEventListener('click', function () { if (playing) stop(); updateStatus(); showRuns(); $('dlgSettings').showModal(); });
+  $('btnSettingsClose').addEventListener('click', function () { $('dlgSettings').close(); });
+  $('btnPlay').addEventListener('click', toggle);
+  $('btnPrev').addEventListener('click', function () { step(-1); });
+  $('btnNext').addEventListener('click', function () { step(1); });
+  $('btnPara').addEventListener('click', paraHead);
+  $('bar').addEventListener('click', function (e) {
+    if (!units.length) return;
+    var r = $('bar').getBoundingClientRect();
+    var wasPlaying = playing; if (playing) stop();
+    idx = indexForChar(Math.floor((e.clientX - r.left) / r.width * totalChars)); render();
+    if (wasPlaying) play();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.code === 'Space') { e.preventDefault(); toggle(); }
+    else if (e.key === 'ArrowLeft' && e.shiftKey) { e.preventDefault(); paraHead(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
+  });
+
+  // タップで再生・停止、左右のスワイプで戻る・進む（右へ払う＝戻る、左へ払う＝進む）
+  var touch = null, lastTouchEnd = 0;
+  $('stage').addEventListener('touchstart', function (e) { var t = e.changedTouches[0]; touch = { x: t.clientX, y: t.clientY, t: Date.now() }; }, { passive: true });
+  $('stage').addEventListener('touchend', function (e) {
+    if (!touch) return;
+    var t = e.changedTouches[0], dx = t.clientX - touch.x, dy = t.clientY - touch.y;
+    lastTouchEnd = Date.now();
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) step(dx < 0 ? 1 : -1);
+    else if (Math.abs(dx) < 10 && Math.abs(dy) < 10) toggle();
+    touch = null;
+    e.preventDefault();
+  });
+  $('stage').addEventListener('click', function () { if (Date.now() - lastTouchEnd > 600) toggle(); });
+
+  // ---- 設定 ----
+  function bindRange(id, key, fmtOut, after) {
+    var el = $(id); el.value = settings[key];
+    var out = $(id + 'Out'); if (out) out.textContent = fmtOut(settings[key]);
+    el.addEventListener('input', function () {
+      settings[key] = Number(el.value); save('rsvp.settings', settings);
+      if (out) out.textContent = fmtOut(settings[key]);
+      if (after) after();
+    });
+  }
+  function onSpeed() {
+    if (playing) { stop(); play(); } else render();
+  }
+  bindRange('speed', 'speed', function (v) { return v + '字/分'; }, onSpeed);
+  bindRange('size', 'size', function (v) { return v + 'px'; }, fitSize);
+  function bindNum(id, key, rebuildUnits) {
+    var el = $(id); el.value = settings[key];
+    el.addEventListener('change', function () {
+      var v = Math.round(Number(el.value));
+      if (!isFinite(v)) v = DEFAULTS[key];
+      v = Math.max(Number(el.min), Math.min(Number(el.max), v));
+      el.value = v; settings[key] = v; save('rsvp.settings', settings);
+      if (rebuildUnits) rebuild(units[idx] ? units[idx].start : 0); else render();
+      updateStatus();
+    });
+  }
+  bindNum('minLen', 'minLen', true);
+  bindNum('maxLen', 'maxLen', true);
+  bindNum('pauseComma', 'pauseComma', false);
+  bindNum('pausePeriod', 'pausePeriod', false);
+  window.addEventListener('resize', function () { fitSize(); updateStatus(); });
+
+  // ---- 起動 ----
+  // BudouX を読み込む（5秒以内に読めなければ簡易分割のまま）
+  var budoux = Promise.race([
+    import('https://cdn.jsdelivr.net/npm/budoux@0.9.2/+esm'),
+    new Promise(function (_, rej) { setTimeout(function () { rej(new Error('timeout')); }, 5000); })
+  ]).then(function (m) { parser = m.loadDefaultJapaneseParser(); segMode = 'BudouX 0.9.2'; })
+    .catch(function (e) { segMode = '簡易分割（BudouX を読み込めませんでした：' + e.message + '）'; });
+
+  // 外字の表（読めなければ外字は消すだけ）
+  var gaijiLoad = fetch('gaiji.json').then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+    .then(function (j) { gaiji = j.map; gaijiMode = Object.keys(gaiji).length + '字の表で置き換え'; })
+    .catch(function (e) {
+      gaijiMode = '表を読み込めませんでした（外字は取り除きます）：' + (FILE_MODE ? 'ファイルを直接開いているため。URL で開くと使えます' : e.message);
+    });
+
+  Promise.all([budoux, gaijiLoad]).then(function () {
+    var last = load('rsvp.last');
+    if (last && last.paragraphs) openText(last.paragraphs.join('\n'), last.title);
+    else if (FILE_MODE) { $('hint').textContent = ''; $('msg').textContent = FILE_MSG; $('dlgOpen').showModal(); }
+    else $('btnKumo').click();
+    updateStatus();
+  });
+  $('hint').textContent = '読み込み中…';
+
+  // 検証用（tools やブラウザーのコンソールから参照）
+  window.RSVP = { get units() { return units; }, get settings() { return settings; }, remainingMs: remainingMs, get segMode() { return segMode; } };
+})();
+</script>
+</body>
+</html>
