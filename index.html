@@ -40,8 +40,10 @@
 
   /* 下部 */
   footer { padding: 8px 16px 12px; border-top: 1px solid var(--border); }
-  #bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; cursor: pointer; }
-  #barFill { height: 100%; width: 0; background: var(--accent); }
+  /* 見た目は細い線のまま、指で触れる範囲を上下に広げる。ドラッグ中に画面が動かないよう touch-action: none */
+  #bar { height: 26px; padding: 10px 0; margin: -10px 0; background: var(--border); background-clip: content-box;
+    border-radius: 3px; cursor: pointer; touch-action: none; }
+  #barFill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; }
   #stats { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted);
     margin: 6px 0 8px; font-variant-numeric: tabular-nums; }
   #controls { display: flex; gap: 8px; justify-content: center; }
@@ -773,13 +775,26 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('btnPrev').addEventListener('click', function () { step(-1); });
   $('btnNext').addEventListener('click', function () { step(1); });
   $('btnPara').addEventListener('click', paraHead);
-  $('bar').addEventListener('click', function (e) {
-    if (!units.length) return;
+  // 進捗バー：押した位置へ移動し、そのままドラッグで微調整できる。離したときに再生中なら再開する
+  var drag = null;
+  function barSeek(e) {
     var r = $('bar').getBoundingClientRect();
-    var wasPlaying = playing; if (playing) stop();
-    idx = indexForChar(Math.floor((e.clientX - r.left) / r.width * totalChars)); render();
-    if (wasPlaying) play();
+    var x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    idx = indexForChar(Math.floor(x * Math.max(0, totalChars - 1)));
+    render();
+  }
+  $('bar').addEventListener('pointerdown', function (e) {
+    if (!units.length) return;
+    drag = { wasPlaying: playing };
+    if (playing) stop();
+    try { $('bar').setPointerCapture(e.pointerId); } catch (err) {}
+    barSeek(e);
+    e.preventDefault();
   });
+  $('bar').addEventListener('pointermove', function (e) { if (drag) barSeek(e); });
+  function endDrag() { if (!drag) return; var w = drag.wasPlaying; drag = null; flushPos(); if (w) play(); }
+  $('bar').addEventListener('pointerup', endDrag);
+  $('bar').addEventListener('pointercancel', endDrag);
 
   document.addEventListener('keydown', function (e) {
     if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
