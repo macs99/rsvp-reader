@@ -94,6 +94,17 @@
   .opts select { font: inherit; font-size: 14px; background: var(--bg); color: var(--fg);
     border: 1px solid var(--border); border-radius: 6px; padding: 3px; }
   #names { height: 90px; }
+  /* PC など幅の広い画面：操作と表示の切り替えを画面の下に横に並べる */
+  @media (min-width: 900px) {
+    footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 20px; }
+    footer #bar, footer #stats { flex: 1 1 100%; }
+    footer #stats { margin: 0 0 4px; }
+    footer .row { margin-top: 0; }
+    footer .row label { min-width: 0; }
+    footer .row input[type=range] { flex: none; width: 150px; }
+    footer .row output { min-width: 4.5em; }
+    footer .opts { flex: 1 1 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 20px; }
+  }
   #unitList { font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif; font-size: 14px;
     max-height: 40vh; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px; margin: 0; }
 </style>
@@ -115,7 +126,7 @@
 
 <div id="sync" hidden><span id="syncText"></span><button id="syncGo">そこから再開</button><button id="syncNo">この端末の位置から</button></div>
 
-<footer>
+<footer id="footer">
   <div id="bar" title="クリックで移動"><div id="barFill"></div></div>
   <div id="stats"><span id="pos" title="押すと、段落や字数を指定して移動できます">—</span><span id="remain">—</span></div>
   <div id="controls">
@@ -148,7 +159,8 @@
 <dialog id="dlgSettings">
   <h2>設定</h2>
   <h3>表示</h3>
-  <div class="opts">
+  <p class="note" id="optsMoved" hidden>表示の切り替えは、画面の下に並べています。</p>
+  <div id="optsHome"><div class="opts" id="opts">
     <div class="row"><label for="rubyMode">ルビ</label><select id="rubyMode">
       <option value="all">同じ語すべてに付ける</option><option value="source">原文どおり</option><option value="off">表示しない</option></select></div>
     <div class="row"><label for="group">まとめる</label><select id="group">
@@ -162,7 +174,7 @@
     <div class="row"><label><input type="checkbox" id="nameSlow"> 名前で少し長く</label></div>
     <div class="row"><label><input type="checkbox" id="vertical"> 縦表示</label></div>
     <div class="row"><label><input type="checkbox" id="guide"> 注視点ガイド</label></div>
-  </div>
+  </div></div>
   <h3>名前（この作品）</h3>
   <p class="note">1行に1つ。色分け・人物ラベル・「名前で少し長く」の対象になります。最初は本文から自動で探した候補が入ります（敬称の付く語、「と云う」の前の語、何度も出るカタカナ語）。</p>
   <textarea id="names"></textarea>
@@ -1108,7 +1120,13 @@ if (typeof module !== 'undefined') module.exports = Core;
   $('bar').addEventListener('pointercancel', endDrag);
 
   document.addEventListener('keydown', function (e) {
-    if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (document.querySelector('dialog[open]')) return;
+    var t = e.target;
+    // 文字や数字を入れる欄・選択欄では、キーをそのまま使わせる
+    if (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || (t.tagName === 'INPUT' && !/checkbox|range/.test(t.type))) return;
+    // 画面下のボタン・チェックボックス・つまみを押した直後でも、Space や矢印キーはショートカットとして扱う
+    // （フォーカスを外さないと、Space でボタンが押されたりチェックが切り替わったりする）
+    if (t !== document.body && /BUTTON|INPUT/.test(t.tagName) && /^(Space|Arrow)/.test(e.code || e.key)) t.blur();
     if (e.code === 'Space') { e.preventDefault(); toggle(); }
     else if (e.key === 'ArrowLeft' && e.shiftKey) { e.preventDefault(); paraHead(); }
     else if (e.key === 'ArrowRight' && e.shiftKey) { e.preventDefault(); nextPara(); }
@@ -1198,6 +1216,14 @@ if (typeof module !== 'undefined') module.exports = Core;
       updateStatus();
     });
   }
+  // 幅の広い画面では、表示の切り替えを設定画面から画面の下へ移す（要素は1組だけなので、置き場所を移すだけ）
+  var wide = window.matchMedia('(min-width: 900px)');
+  function placeOpts() {
+    (wide.matches ? $('footer') : $('optsHome')).appendChild($('opts'));
+    $('optsMoved').hidden = !wide.matches;
+  }
+  if (wide.addEventListener) wide.addEventListener('change', placeOpts); else wide.addListener(placeOpts);
+  placeOpts();
   bindOpt('rubyMode', 'rubyMode', 'rebuild');
   bindOpt('group', 'group', 'rebuild');
   bindOpt('minLen', 'minLen', 'rebuild');
