@@ -8,11 +8,11 @@
 <style>
   :root {
     --bg: #f7f5ef; --fg: #1d1b18; --muted: #77716a; --line: #c9453a;
-    --panel: #ffffff; --border: #ddd8cf; --accent: #2f5d8a;
+    --panel: #ffffff; --border: #ddd8cf; --accent: #2f5d8a; --name: #b8231b;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #16150f; --fg: #ece8df; --muted: #9a948a; --line: #e0675b;
-            --panel: #211f19; --border: #3a372f; --accent: #7fb0e0; }
+            --panel: #211f19; --border: #3a372f; --accent: #7fb0e0; --name: #ff6b5e; }
   }
   /* iPhone でバーやつまみを続けて触ったときに、ダブルタップと判定されて拡大しないようにする */
   * { box-sizing: border-box; touch-action: manipulation; }
@@ -30,12 +30,24 @@
   /* 表示部 */
   #stage { flex: 1; position: relative; overflow: hidden; touch-action: pan-y; user-select: none;
     -webkit-user-select: none; -webkit-touch-callout: none; cursor: pointer; }
+  /* 注視点ガイド（上下の細い線）。ルビが入る分だけ文字から離す */
   .mark { position: absolute; left: 50%; width: 0; border-left: 2px solid var(--line); transform: translateX(-1px); }
-  #markTop { bottom: calc(50% + 0.9em); height: 1.2em; }
-  #markBottom { top: calc(50% + 0.9em); height: 1.2em; }
+  #markTop { bottom: calc(50% + 1.35em); height: 1em; }
+  #markBottom { top: calc(50% + 1.35em); height: 1em; }
+  body.noguide .mark { display: none; }
   #word { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
-    text-align: center; white-space: nowrap; line-height: 1.2;
+    text-align: center; white-space: nowrap; line-height: 2.4;
     font-family: "Hiragino Mincho ProN", "Hiragino Mincho Pro", "Yu Mincho", "YuMincho", "BIZ UDPMincho", "MS PMincho", serif; }
+  #word rt { font-size: 0.42em; color: var(--muted); }
+  /* 名前：赤・太字・ゴシック体 */
+  body.namecolor #word .name { color: var(--name); font-weight: 700;
+    font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "YuGothic", "Meiryo", sans-serif; }
+  body.namecolor #word .name rt { color: var(--name); }
+  /* 縦表示：文字を縦に並べ、注視点ガイドを左右に置く */
+  body.vertical #word { left: 50%; right: auto; transform: translate(-50%, -50%); writing-mode: vertical-rl; }
+  body.vertical .mark { top: 50%; width: 1em; height: 0; border-left: 0; border-top: 2px solid var(--line); transform: translateY(-1px); }
+  body.vertical #markTop { left: auto; bottom: auto; right: calc(50% + 1.35em); }
+  body.vertical #markBottom { top: 50%; left: calc(50% + 1.35em); }
   #hint { position: absolute; left: 0; right: 0; bottom: 12px; text-align: center; font-size: 12px; color: var(--muted); }
 
   /* 下部 */
@@ -75,6 +87,13 @@
     border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
   .dbxList { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
   .dbxList button { text-align: left; }
+  #keys { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  @media (max-width: 760px) { #keys { display: none; } }
+  .opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 16px; }
+  .opts .row { margin-top: 4px; }
+  .opts select { font: inherit; font-size: 14px; background: var(--bg); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 6px; padding: 3px; }
+  #names { height: 90px; }
   #unitList { font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif; font-size: 14px;
     max-height: 40vh; overflow: auto; background: var(--bg); border-radius: 8px; padding: 8px; margin: 0; }
 </style>
@@ -82,6 +101,7 @@
 <body>
 <header>
   <h1 id="title">RSVP速読</h1>
+  <span id="keys">Space 再生/停止 · ←→ 1単位 · Shift+←→ 段落 · ↑↓ 速度 · V 縦横</span>
   <button id="btnOpen">作品</button>
   <button id="btnSettings">設定</button>
 </header>
@@ -99,6 +119,7 @@
   <div id="bar" title="クリックで移動"><div id="barFill"></div></div>
   <div id="stats"><span id="pos" title="押すと、段落や字数を指定して移動できます">—</span><span id="remain">—</span></div>
   <div id="controls">
+    <button id="btnStart" title="最初へ">⏮</button>
     <button id="btnPara" title="段落の頭へ（Shift+←）">⇤段落</button>
     <button id="btnPrev" title="1単位戻る（←）">◀</button>
     <button id="btnPlay" title="再生・停止（Space）">再生</button>
@@ -126,7 +147,27 @@
 
 <dialog id="dlgSettings">
   <h2>設定</h2>
-  <div class="row"><label for="minLen">最小文字数</label><input type="number" id="minLen" min="1" max="8"> 字未満は次と結合</div>
+  <h3>表示</h3>
+  <div class="opts">
+    <div class="row"><label for="rubyMode">ルビ</label><select id="rubyMode">
+      <option value="all">同じ語すべてに付ける</option><option value="source">原文どおり</option><option value="off">表示しない</option></select></div>
+    <div class="row"><label for="group">まとめる</label><select id="group">
+      <option value="1">1文節ずつ</option><option value="2">2文節ずつ</option><option value="3">3文節ずつ</option></select></div>
+    <div class="row"><label for="minLen">最小</label><select id="minLen">
+      <option value="1">1字以上</option><option value="2">2字以上</option><option value="3">3字以上</option><option value="4">4字以上</option><option value="5">5字以上</option></select></div>
+    <div class="row"><label><input type="checkbox" id="pauses"> 句読点で間をとる</label></div>
+    <div class="row"><label><input type="checkbox" id="nameColor"> 名前を色分け</label></div>
+    <div class="row"><label for="nameLabel">人物ラベル</label><select id="nameLabel">
+      <option value="first3">章の最初3回</option><option value="first1">章の最初1回</option><option value="always">毎回</option><option value="off">なし</option></select></div>
+    <div class="row"><label><input type="checkbox" id="nameSlow"> 名前で少し長く</label></div>
+    <div class="row"><label><input type="checkbox" id="vertical"> 縦表示</label></div>
+    <div class="row"><label><input type="checkbox" id="guide"> 注視点ガイド</label></div>
+  </div>
+  <h3>名前（この作品）</h3>
+  <p class="note">1行に1つ。色分け・人物ラベル・「名前で少し長く」の対象になります。最初は本文から自動で探した候補が入ります（敬称の付く語、「と云う」の前の語、何度も出るカタカナ語）。</p>
+  <textarea id="names"></textarea>
+  <div class="row"><button id="btnNamesSave">名前を保存</button><button id="btnNamesAuto">自動で探し直す</button><span class="note" id="namesNote"></span></div>
+  <h3>細かい設定</h3>
   <div class="row"><label for="maxLen">最大文字数</label><input type="number" id="maxLen" min="6" max="30"> 字を超えたら分割</div>
   <div class="row"><label for="pauseComma">読点の後</label><input type="number" id="pauseComma" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
   <div class="row"><label for="pausePeriod">句点の後</label><input type="number" id="pausePeriod" min="0" max="2000" step="10"> ミリ秒（0でオフ）</div>
@@ -188,28 +229,6 @@ var Core = (function () {
     return out;
   }
 
-  // 青空文庫の本文から、記号説明・底本情報・ルビ・注記を取り除き、段落の配列を返す
-  function cleanAozora(raw, gaiji) {
-    var s = raw.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
-    var lines = s.split('\n');
-    // 冒頭の「-------」で挟まれた記号説明ブロック（先頭40行以内にあるときだけ）
-    var first = -1, second = -1;
-    for (var k = 0; k < Math.min(lines.length, 40); k++) {
-      if (/^-{10,}\s*$/.test(lines[k])) { if (first < 0) first = k; else { second = k; break; } }
-    }
-    if (first >= 0 && second > first) lines.splice(first, second - first + 1);
-    // 末尾の「底本：」以降
-    for (var b = lines.length - 1; b >= 0; b--) {
-      if (/^底本[：:]/.test(lines[b])) { lines = lines.slice(0, b); break; }
-    }
-    s = lines.join('\n');
-    s = stripAnnotations(s, gaiji);
-    s = s.replace(/《[^《》\n]*》/g, '').replace(/｜/g, '');
-    return s.split('\n')
-      .map(function (p) { return p.replace(/^[\s　]+|[\s　]+$/g, ''); })
-      .filter(function (p) { return p.length > 0; });
-  }
-
   // BudouX が使えないときの簡易分割：句読点の後と、漢字・カタカナに続く助詞の後で区切る
   var PARTICLES = ['から', 'まで', 'より', 'ので', 'のに', 'けれど', 'ながら', 'は', 'が', 'を', 'に', 'で', 'と', 'も', 'へ', 'の', 'や', 'て'];
   function isHira(c) { return c >= 'ぁ' && c <= 'ゟ'; }
@@ -234,10 +253,135 @@ var Core = (function () {
 
   function isPunctOnly(t) { return Array.from(t).every(function (c) { return PUNCT.indexOf(c) >= 0 || OPENERS.indexOf(c) >= 0; }); }
 
+  // 文字の種類（ルビの親文字の範囲を決めるのに使う）。k=漢字 K=カタカナ h=ひらがな a=英数字 o=その他
+  function charClass(c) {
+    if (/[㐀-鿿豈-﫿々〆〇ヶ\uD800-\uDFFF]/.test(c)) return 'k';
+    if (/[ァ-ヺー]/.test(c)) return 'K';
+    if (/[ぁ-ゖ]/.test(c)) return 'h';
+    if (/[A-Za-zＡ-Ｚａ-ｚ0-9０-９]/.test(c)) return 'a';
+    return 'o';
+  }
+
+  // 1行からルビを取り出す。｜があればそこから、なければ《の直前の同じ種類の文字の並びが親文字
+  // 戻り値 { text, ruby: [{ s, e, rt }] }（s, e は text の中の位置）
+  function parseRuby(line) {
+    var out = '', ruby = [], bar = -1;
+    for (var i = 0; i < line.length; i++) {
+      var c = line[i];
+      if (c === '｜') { bar = out.length; continue; }
+      if (c === '《') {
+        var j = line.indexOf('》', i);
+        if (j < 0) { out += c; continue; }
+        var s = out.length;
+        if (bar >= 0) s = bar;
+        else if (s > 0) {
+          var cls = charClass(out[s - 1]);
+          if (cls !== 'o') while (s > 0 && charClass(out[s - 1]) === cls) s--;
+        }
+        if (s < out.length) ruby.push({ s: s, e: out.length, rt: line.slice(i + 1, j) });
+        bar = -1; i = j;
+        continue;
+      }
+      out += c;
+    }
+    return { text: out, ruby: ruby };
+  }
+
+  // 青空文庫の本文を読み取る。記号説明・底本情報・注記を取り除き、ルビと見出しを別に持つ
+  // 戻り値 { paragraphs: [文字列], ruby: [[{ s, e, rt }]], heading: [真偽] }
+  function parseAozora(raw, gaiji) {
+    var s = raw.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    var lines = s.split('\n');
+    // 冒頭の「-------」で挟まれた記号説明ブロック（先頭40行以内にあるときだけ）
+    var first = -1, second = -1;
+    for (var k = 0; k < Math.min(lines.length, 40); k++) {
+      if (/^-{10,}\s*$/.test(lines[k])) { if (first < 0) first = k; else { second = k; break; } }
+    }
+    if (first >= 0 && second > first) lines.splice(first, second - first + 1);
+    // 末尾の「底本：」以降
+    for (var b = lines.length - 1; b >= 0; b--) {
+      if (/^底本[：:]/.test(lines[b])) { lines = lines.slice(0, b); break; }
+    }
+    var doc = { paragraphs: [], ruby: [], heading: [] };
+    lines.forEach(function (line) {
+      var isHeading = /［＃[^］]*見出し］/.test(line);
+      var r = parseRuby(stripAnnotations(line, gaiji));
+      var lead = r.text.match(/^[\s　]*/)[0].length;
+      var t = r.text.replace(/^[\s　]+|[\s　]+$/g, '');
+      if (!t) return;
+      doc.paragraphs.push(t);
+      doc.ruby.push(r.ruby.map(function (x) { return { s: x.s - lead, e: x.e - lead, rt: x.rt }; })
+        .filter(function (x) { return x.s >= 0 && x.e <= t.length; }));
+      doc.heading.push(isHeading);
+    });
+    return doc;
+  }
+  // 段落の文字列だけが欲しいとき（検証スクリプト用）
+  function cleanAozora(raw, gaiji) { return parseAozora(raw, gaiji).paragraphs; }
+
+  // ルビの辞書：親文字 → 読み。2字以上で、作品の中で読みが1通りのものだけ（1字の漢字は読みが揺れるので使わない）
+  function rubyDict(doc) {
+    var d = {}, bad = {};
+    doc.ruby.forEach(function (list, pi) {
+      list.forEach(function (r) {
+        var base = doc.paragraphs[pi].slice(r.s, r.e);
+        if (len(base) < 2) return;
+        if (d[base] && d[base] !== r.rt) bad[base] = true;
+        d[base] = d[base] || r.rt;
+      });
+    });
+    Object.keys(bad).forEach(function (k) { delete d[k]; });
+    return d;
+  }
+
+  // 段落の中で words（文字列の配列）が現れる範囲を、長い語を優先して重ならないように探す
+  // 漢字だけの語は、前後が漢字のとき（もっと長い語の一部のとき）は数えない
+  function findWords(p, words) {
+    var hits = [], taken = [];
+    words.slice().sort(function (x, y) { return y.length - x.length; }).forEach(function (w) {
+      if (!w) return;
+      var allKanji = Array.from(w).every(function (c) { return charClass(c) === 'k'; });
+      for (var i = p.indexOf(w); i >= 0; i = p.indexOf(w, i + 1)) {
+        var e = i + w.length;
+        if (allKanji && ((i > 0 && charClass(p[i - 1]) === 'k') || (e < p.length && charClass(p[e]) === 'k'))) continue;
+        var clash = false;
+        for (var q = i; q < e; q++) if (taken[q]) { clash = true; break; }
+        if (clash) continue;
+        for (q = i; q < e; q++) taken[q] = true;
+        hits.push({ s: i, e: e, word: w });
+      }
+    });
+    return hits.sort(function (x, y) { return x.s - y.s; });
+  }
+
+  // 人物などの名前の候補を本文から探す（自動判定。完全ではないので、利用者が直せる前提）
+  // 1) 敬称（様・さん・殿・君・氏）が付く語 2) 「と云う」「という」「と申す」の前の語 3) 何度も出るカタカナ語
+  function detectNames(paragraphs) {
+    var text = paragraphs.join('\n'), score = {};
+    function add(w, n) { score[w] = (score[w] || 0) + n; }
+    var K = '[\\u3400-\\u9FFF々ヶ\\uD800-\\uDFFF\\u30A1-\\u30FAー]';
+    var m, re1 = new RegExp('(' + K + '{1,6}?)(様|さま|さん|殿|君|氏)(?![\\u3400-\\u9FFF])', 'g');
+    while ((m = re1.exec(text))) {
+      var base = m[1].replace(/^[御お]/, '');
+      if (len(base) >= 2) add(m[1] + m[2], 1);
+    }
+    var re2 = new RegExp('(' + K + '{2,8})(?:と云う|という|と言う|と申す|と呼ぶ)', 'g');
+    while ((m = re2.exec(text))) add(m[1], 2);
+    var re3 = /[ァ-ヺ][ァ-ヺー・]{2,}/g;
+    while ((m = re3.exec(text))) add(m[0], 1);
+    function count(w) { return text.split(w).length - 1; }
+    return Object.keys(score).filter(function (w) {
+      return count(w) >= 2 && score[w] >= 2 && !/^[ー・]|・$/.test(w);
+    }).sort(function (x, y) { return count(y) - count(x); });
+  }
+
   // 長い単位を maxLen 以下に分ける（なるべく均等に。句読点は前に付けたまま）
-  function splitLong(t, maxLen) {
+  // bad(位置) が真になるところ（名前やルビの途中）では切らない
+  function splitLong(t, maxLen, bad) {
     var chars = Array.from(t);
     if (chars.length <= maxLen) return [t];
+    var cu = [0];  // 文字の番号 → 文字列の中の位置
+    chars.forEach(function (c, i) { cu[i + 1] = cu[i] + c.length; });
     var n = Math.ceil(chars.length / maxLen), size = Math.ceil(chars.length / n), out = [], i = 0;
     while (i < chars.length) {
       var end = Math.min(chars.length, i + size);
@@ -245,6 +389,8 @@ var Core = (function () {
       while (end < chars.length && CLOSERS.indexOf(chars[end]) >= 0 && end - i < maxLen) end++;
       // 開き括弧で終わらないように前へずらす
       while (end - 1 > i && OPENERS.indexOf(chars[end - 1]) >= 0) end--;
+      // 名前やルビの途中なら後ろへずらす
+      while (end < chars.length && bad && bad(cu[end])) end++;
       out.push(chars.slice(i, end).join(''));
       i = end;
     }
@@ -252,9 +398,9 @@ var Core = (function () {
   }
 
   // 段落の配列から表示単位を作る
-  // opts: { minLen, maxLen, segment(p) -> string[] }
+  // opts: { minLen, maxLen, segment(p) -> string[], protect(pi) -> [{ s, e }]（途中で切らない範囲）, group（まとめる文節数） }
   function buildUnits(paragraphs, opts) {
-    var units = [], offset = 0;
+    var units = [], offset = 0, group = opts.group || 1;
     paragraphs.forEach(function (p, pi) {
       var chunks = opts.segment(p).filter(function (c) { return c.length > 0; });
       // 句読点・閉じ括弧で始まる片は、その部分を直前の片へ移す
@@ -270,6 +416,17 @@ var Core = (function () {
         var m = a[i].match(/[「『（(【〔〈［\[｛{]+$/);
         if (m && m[0].length < a[i].length) { a[i] = a[i].slice(0, -m[0].length); a[i + 1] = m[0] + a[i + 1]; }
       }
+      // 名前やルビの途中で切れている片はつなぐ
+      var prot = opts.protect ? opts.protect(pi) : [];
+      var bad = function (pos) { return prot.some(function (r) { return r.s < pos && pos < r.e; }); };
+      if (prot.length) {
+        var a2 = [], pos = 0;
+        a.forEach(function (c) {
+          if (a2.length && bad(pos)) a2[a2.length - 1] += c; else a2.push(c);
+          pos += c.length;
+        });
+        a = a2;
+      }
       // 最小文字数未満は次と結合（最大文字数を超えるなら前との結合を試す）
       var b = [];
       for (var j = 0; j < a.length; j++) {
@@ -280,12 +437,27 @@ var Core = (function () {
         b.push(t);
       }
       // 長すぎる単位を分割
-      var c2 = [];
-      b.forEach(function (t) { splitLong(t, opts.maxLen).forEach(function (x) { c2.push(x); }); });
+      var c2 = [], base = 0;
+      b.forEach(function (t) {
+        var b0 = base;
+        splitLong(t, opts.maxLen, function (x) { return bad(b0 + x); }).forEach(function (x) { c2.push(x); });
+        base += t.length;
+      });
+      // 複数の文節をまとめて表示する（文の終わりはまたがない。長くなりすぎない範囲で）
+      if (group > 1) {
+        var limit = opts.maxLen + 8 * (group - 1), c3 = [];
+        for (var g = 0; g < c2.length; g++) {
+          var t2 = c2[g], n2 = 1;
+          while (n2 < group && g + 1 < c2.length && pauseKind(t2) !== 'period' && len(t2) + len(c2[g + 1]) <= limit) { t2 += c2[++g]; n2++; }
+          c3.push(t2);
+        }
+        c2 = c3;
+      }
+      var off = 0;
       c2.forEach(function (t, ui) {
         var n = len(t);
-        units.push({ text: t, para: pi, paraStart: ui === 0, start: offset, len: n });
-        offset += n;
+        units.push({ text: t, para: pi, paraStart: ui === 0, start: offset, len: n, off: off });
+        offset += n; off += t.length;
       });
     });
     return units;
@@ -303,6 +475,7 @@ var Core = (function () {
   // 1単位の表示時間（ミリ秒）
   function duration(unit, o) {
     var d = Math.max(120, unit.len * 60000 / o.speed);
+    if (unit.hasName && o.nameSlow) d *= o.nameSlow;  // 名前を含む単位は少し長く
     var k = pauseKind(unit.text);
     if (k === 'comma') d += o.pauseComma;
     if (k === 'period') d += o.pausePeriod;
@@ -315,9 +488,10 @@ var Core = (function () {
     catch (e) { return new TextDecoder('shift_jis').decode(bytes); }
   }
 
-  return { cleanAozora: cleanAozora, stripAnnotations: stripAnnotations, fallbackSplit: fallbackSplit,
+  return { parseAozora: parseAozora, cleanAozora: cleanAozora, stripAnnotations: stripAnnotations, parseRuby: parseRuby,
+    rubyDict: rubyDict, findWords: findWords, detectNames: detectNames, fallbackSplit: fallbackSplit,
     buildUnits: buildUnits, duration: duration, pauseKind: pauseKind, decode: decode,
-    isPunctOnly: isPunctOnly, len: len };
+    isPunctOnly: isPunctOnly, len: len, charClass: charClass };
 })();
 if (typeof module !== 'undefined') module.exports = Core;
 </script>
@@ -327,7 +501,9 @@ if (typeof module !== 'undefined') module.exports = Core;
 <script>
 (function () {
   var $ = function (id) { return document.getElementById(id); };
-  var DEFAULTS = { speed: 600, size: 36, minLen: 3, maxLen: 12, pauseComma: 150, pausePeriod: 300 };
+  var DEFAULTS = { speed: 600, size: 36, minLen: 3, maxLen: 12, pauseComma: 150, pausePeriod: 300,
+    rubyMode: 'all', group: 1, pauses: true, nameColor: true, nameLabel: 'first3', nameSlow: true, vertical: false, guide: true };
+  var NAME_SLOW = 1.25;        // 「名前で少し長く」：名前を含む単位の表示時間（句読点の間を除く）を 1.25 倍にする
   var settings = Object.assign({}, DEFAULTS, load('rsvp.settings') || {});
   var parser = null;           // BudouX の日本語パーサー
   var segMode = '読み込み中';
@@ -335,7 +511,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   // ファイルとして直接開いたとき（file://）は、ブラウザーが同じフォルダーのファイル読み込みを禁止する
   var FILE_MODE = location.protocol === 'file:';
   var FILE_MSG = 'ファイルを直接開くと、同梱の作品を読めません。URL（http://… または https://…）で開いてください。ファイルを選ぶ方法と貼り付ける方法は使えます。';
-  var work = null;             // { id, title, paragraphs }
+  var work = null;             // { id, title, doc: { paragraphs, ruby, heading }, names, nameHits, rubyShow }
   var units = [], idx = 0, totalChars = 0;
   var playing = false, timer = null, nextAt = 0;
   var run = null;              // 最後まで再生したときの計測 { startAt, predicted, startIdx, speed }
@@ -346,9 +522,52 @@ if (typeof module !== 'undefined') module.exports = Core;
 
   // ---- 表示単位 ----
   function segment(p) { return parser ? parser.parse(p) : Core.fallbackSplit(p); }
+  // 名前の位置と、表示するルビを段落ごとに計算する
+  //   ルビ：「同じ語すべて」なら、原文のルビ（2字以上で読みが1通りのもの）を同じ語の他の箇所にも付ける
+  //   名前の読み（人物ラベル）：章（見出し）ごとに、最初の3回／1回／毎回／なし
+  function prepare() {
+    var doc = work.doc, dict = Core.rubyDict(doc), names = work.names || [], isName = {};
+    names.forEach(function (n) { isName[n] = true; });
+    var reading = {};  // 名前 → 読み（原文でその名前全体にルビが付いているもの）
+    doc.ruby.forEach(function (list, pi) {
+      list.forEach(function (r) { var b = doc.paragraphs[pi].slice(r.s, r.e); if (isName[b] && !reading[b]) reading[b] = r.rt; });
+    });
+    var words = Object.keys(dict).filter(function (w) { return !isName[w]; });
+    var labelMax = { first3: 3, first1: 1, always: Infinity, off: 0 }[settings.nameLabel];
+    var counts = {};
+    work.nameHits = []; work.rubyShow = [];
+    doc.paragraphs.forEach(function (p, pi) {
+      if (doc.heading[pi]) counts = {};  // 見出しで章が変わったら数え直す
+      var hits = names.length ? Core.findWords(p, names) : [];
+      var over = function (r) { return hits.some(function (h) { return r.s < h.e && h.s < r.e; }); };
+      var show = [];
+      if (settings.rubyMode !== 'off') {
+        doc.ruby[pi].forEach(function (r) { if (!over(r)) show.push(r); });
+        if (settings.rubyMode === 'all') {
+          Core.findWords(p, words).forEach(function (h) {
+            if (over(h) || show.some(function (r) { return r.s < h.e && h.s < r.e; })) return;
+            show.push({ s: h.s, e: h.e, rt: dict[h.word] });
+          });
+        }
+      }
+      hits.forEach(function (h) {
+        counts[h.word] = (counts[h.word] || 0) + 1;
+        if (reading[h.word] && counts[h.word] <= labelMax) show.push({ s: h.s, e: h.e, rt: reading[h.word] });
+      });
+      show.sort(function (x, y) { return x.s - y.s; });
+      work.nameHits.push(hits);
+      work.rubyShow.push(show);
+    });
+  }
   function rebuild(keepChar) {
     if (!work) return;
-    units = Core.buildUnits(work.paragraphs, { minLen: settings.minLen, maxLen: settings.maxLen, segment: segment });
+    prepare();
+    units = Core.buildUnits(work.doc.paragraphs, { minLen: settings.minLen, maxLen: settings.maxLen, segment: segment,
+      group: settings.group, protect: function (pi) { return work.nameHits[pi].concat(work.rubyShow[pi]); } });
+    units.forEach(function (u) {
+      var b = u.off + u.text.length;
+      u.hasName = work.nameHits[u.para].some(function (h) { return h.s < b && h.e > u.off; });
+    });
     totalChars = units.length ? units[units.length - 1].start + units[units.length - 1].len : 0;
     idx = indexForChar(keepChar || 0);
     fitSize();
@@ -367,14 +586,41 @@ if (typeof module !== 'undefined') module.exports = Core;
   function fitSize() {
     var maxN = 0;
     units.forEach(function (u) { if (u.len > maxN) maxN = u.len; });
-    var avail = $('stage').clientWidth - 32;
+    var avail = (settings.vertical ? $('stage').clientHeight : $('stage').clientWidth) - 32;
     fitted = Math.min(settings.size, Math.floor(avail / Math.max(1, maxN)));
     $('word').style.fontSize = $('markTop').style.fontSize = $('markBottom').style.fontSize = fitted + 'px';
     $('sizeOut').textContent = settings.size + 'px' + (fitted < settings.size ? '（' + fitted + '）' : '');
   }
 
   // ---- 表示 ----
-  function opts() { return { speed: settings.speed, pauseComma: settings.pauseComma, pausePeriod: settings.pausePeriod }; }
+  function opts() {
+    return { speed: settings.speed, pauseComma: settings.pauses ? settings.pauseComma : 0,
+      pausePeriod: settings.pauses ? settings.pausePeriod : 0, nameSlow: settings.nameSlow ? NAME_SLOW : 0 };
+  }
+  // 表示単位を HTML にする（ルビは <ruby>、名前は <span class="name">）
+  function esc(t) { return t.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function unitHtml(u) {
+    var p = work.doc.paragraphs[u.para], a = u.off, b = u.off + u.text.length;
+    var rubies = work.rubyShow[u.para].filter(function (r) { return r.s >= a && r.e <= b; });
+    var names = work.nameHits[u.para].filter(function (h) { return h.s < b && h.e > a; });
+    var tokens = [], i = a;
+    while (i < b) {
+      var r = null;
+      for (var k = 0; k < rubies.length; k++) if (rubies[k].s === i) { r = rubies[k]; break; }
+      if (r) { tokens.push({ s: i, html: '<ruby>' + esc(p.slice(r.s, r.e)) + '<rt>' + esc(r.rt) + '</rt></ruby>' }); i = r.e; continue; }
+      var ch = String.fromCodePoint(p.codePointAt(i));
+      tokens.push({ s: i, html: esc(ch) }); i += ch.length;
+    }
+    var out = '', open = null;
+    tokens.forEach(function (t) {
+      if (open && t.s >= open.e) { out += '</span>'; open = null; }
+      if (!open) {
+        for (var k = 0; k < names.length; k++) if (t.s >= names[k].s && t.s < names[k].e) { open = names[k]; out += '<span class="name">'; break; }
+      }
+      out += t.html;
+    });
+    return open ? out + '</span>' : out;
+  }
   function remainingMs(from) {
     var o = opts(), t = 0;
     for (var i = from; i < units.length; i++) t += Core.duration(units[i], o);
@@ -386,7 +632,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   }
   function render() {
     var u = units[idx];
-    $('word').textContent = u ? u.text : '';
+    $('word').innerHTML = u ? unitHtml(u) : '';
     var done = u ? u.start + u.len : 0;
     $('barFill').style.width = totalChars ? (done / totalChars * 100) + '%' : '0';
     $('pos').textContent = u ? totalChars.toLocaleString() + '字中 ' + done.toLocaleString() + '字目（第' + (u.para + 1) + '段落）' : '—';
@@ -475,6 +721,14 @@ if (typeof module !== 'undefined') module.exports = Core;
     var wasPlaying = playing; if (playing) stop();
     idx = Math.max(0, Math.min(units.length - 1, idx + d));
     render();
+    if (wasPlaying) play();
+  }
+  function toStart() { var w = playing; if (playing) stop(); idx = 0; render(); if (w) play(); }
+  function nextPara() {
+    var wasPlaying = playing; if (playing) stop();
+    var i = idx + 1;
+    while (i < units.length && !units[i].paraStart) i++;
+    idx = Math.min(i, units.length - 1); render();
     if (wasPlaying) play();
   }
   function paraHead() {
@@ -698,6 +952,53 @@ if (typeof module !== 'undefined') module.exports = Core;
     }).catch(function () {});
   }
 
+  // ---- 名前（作品ごと）。この端末と Dropbox の names.json に保存する ----
+  var NAMES_PATH = '/names.json';
+  function loadNames(w) {
+    var rec = load('rsvp.names.' + w.id);
+    return rec ? rec.names : Core.detectNames(w.doc.paragraphs);
+  }
+  function keepPos() { return units[idx] ? units[idx].start : 0; }
+  function setNames(list, at) {
+    work.names = list;
+    save('rsvp.names.' + work.id, { names: list, at: at });
+    rebuild(keepPos());
+  }
+  function saveNames(list) {
+    var at = Date.now(), id = work.id, title = work.title;
+    setNames(list, at);
+    if (!dbx) return;
+    dbxDownload(NAMES_PATH).then(function (b) {
+      var j = b ? JSON.parse(new TextDecoder().decode(b)) : {};
+      j.works = j.works || {};
+      j.works[id] = { names: list, at: at, title: title };
+      return dbxUpload(NAMES_PATH, JSON.stringify(j));
+    }).then(function () { $('namesNote').textContent = '保存しました（Dropbox にも保存）'; })
+      .catch(function (e) { $('namesNote').textContent = 'この端末には保存しました。Dropbox への保存に失敗：' + e.message; });
+  }
+  // 他の端末で直した名前のほうが新しければ、それを使う
+  function checkRemoteNames() {
+    if (!dbx || !work) return;
+    var id = work.id;
+    dbxDownload(NAMES_PATH).then(function (b) {
+      if (!b || !work || work.id !== id) return;
+      var r = (JSON.parse(new TextDecoder().decode(b)).works || {})[id];
+      var l = load('rsvp.names.' + id);
+      if (r && (!l || r.at > l.at)) setNames(r.names, r.at);
+    }).catch(function () {});
+  }
+  function namesFromText() {
+    var seen = {};
+    return $('names').value.split(/\n/).map(function (x) { return x.trim(); })
+      .filter(function (x) { if (!x || seen[x]) return false; seen[x] = true; return true; });
+  }
+  $('btnNamesSave').addEventListener('click', function () { if (work) { saveNames(namesFromText()); $('namesNote').textContent = '保存しました'; } });
+  $('btnNamesAuto').addEventListener('click', function () {
+    if (!work) return;
+    $('names').value = Core.detectNames(work.doc.paragraphs).join('\n');
+    $('namesNote').textContent = '候補を入れました。「名前を保存」で反映します';
+  });
+
   // ---- 位置へ移動（段落・字数） ----
   function openJump() {
     if (!units.length) return;
@@ -720,16 +1021,18 @@ if (typeof module !== 'undefined') module.exports = Core;
 
   // ---- 作品を開く ----
   function hashId(s) { var h = 5381; for (var i = 0; i < s.length; i++) h = (h * 33 + s.charCodeAt(i)) >>> 0; return h.toString(36) + '_' + s.length; }
-  function openText(text, fallbackTitle) {
-    var paragraphs = Core.cleanAozora(text, gaiji);
+  function openText(text, fallbackTitle) { openDoc(Core.parseAozora(text, gaiji), fallbackTitle); }
+  function openDoc(doc, fallbackTitle) {
+    var paragraphs = doc.paragraphs;
     if (!paragraphs.length) { $('msg').textContent = '本文が見つかりませんでした。'; return; }
     if (playing) stop();
     if (work) { flushPos(); syncMark(); }
     var title = paragraphs.length > 2 && paragraphs[0].length < 40 && paragraphs[1].length < 30 ? paragraphs[0] + '　' + paragraphs[1] : fallbackTitle;
-    work = { id: hashId(paragraphs.join('\n')), title: title, paragraphs: paragraphs };
+    work = { id: hashId(paragraphs.join('\n')), title: title, doc: doc };
+    work.names = loadNames(work);
     $('title').textContent = title;
     document.title = title + ' — RSVP速読';
-    save('rsvp.last', { title: title, paragraphs: paragraphs.length > 3000 ? null : paragraphs });
+    save('rsvp.last', { title: title, doc: paragraphs.length > 3000 ? null : doc });
     var pos = localMark(work.id).pos;
     $('sync').hidden = true;
     rebuild(pos);
@@ -738,6 +1041,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     if ($('dlgOpen').open) $('dlgOpen').close();
     updateStatus();
     checkRemoteMark();
+    checkRemoteNames();
   }
   function openBytes(buf, name) {
     var u8 = new Uint8Array(buf);
@@ -769,12 +1073,19 @@ if (typeof module !== 'undefined') module.exports = Core;
   // ---- 操作 ----
   $('btnOpen').addEventListener('click', function () { if (playing) stop(); renderDbx(); $('dlgOpen').showModal(); });
   $('btnOpenClose').addEventListener('click', function () { $('dlgOpen').close(); });
-  $('btnSettings').addEventListener('click', function () { if (playing) stop(); updateStatus(); showRuns(); $('dlgSettings').showModal(); });
+  $('btnSettings').addEventListener('click', function () {
+    if (playing) stop();
+    updateStatus(); showRuns();
+    $('names').value = work ? (work.names || []).join('\n') : '';
+    $('namesNote').textContent = work ? (load('rsvp.names.' + work.id) ? '' : '（自動で探した候補です）') : '';
+    $('dlgSettings').showModal();
+  });
   $('btnSettingsClose').addEventListener('click', function () { $('dlgSettings').close(); });
   $('btnPlay').addEventListener('click', toggle);
   $('btnPrev').addEventListener('click', function () { step(-1); });
   $('btnNext').addEventListener('click', function () { step(1); });
   $('btnPara').addEventListener('click', paraHead);
+  $('btnStart').addEventListener('click', toStart);
   // 進捗バー：押した位置へ移動し、そのままドラッグで微調整できる。離したときに再生中なら再開する
   var drag = null;
   function barSeek(e) {
@@ -800,6 +1111,9 @@ if (typeof module !== 'undefined') module.exports = Core;
     if (document.querySelector('dialog[open]') || /INPUT|TEXTAREA/.test(e.target.tagName)) return;
     if (e.code === 'Space') { e.preventDefault(); toggle(); }
     else if (e.key === 'ArrowLeft' && e.shiftKey) { e.preventDefault(); paraHead(); }
+    else if (e.key === 'ArrowRight' && e.shiftKey) { e.preventDefault(); nextPara(); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setSpeed(settings.speed + (e.key === 'ArrowUp' ? 50 : -50)); }
+    else if (e.key === 'v' || e.key === 'V') { e.preventDefault(); settings.vertical = !settings.vertical; $('vertical').checked = settings.vertical; save('rsvp.settings', settings); applyLook(); }
     else if (e.key === 'ArrowLeft') { e.preventDefault(); step(-1); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); step(1); }
   });
@@ -858,7 +1172,42 @@ if (typeof module !== 'undefined') module.exports = Core;
       updateStatus();
     });
   }
-  bindNum('minLen', 'minLen', true);
+  function setSpeed(v) {
+    v = Math.max(300, Math.min(2000, v));
+    settings.speed = v; save('rsvp.settings', settings);
+    $('speed').value = v; $('speedOut').textContent = v + '字/分';
+    onSpeed();
+  }
+  // 見た目だけの設定（縦表示・注視点ガイド・名前の色）を画面に反映
+  function applyLook() {
+    document.body.classList.toggle('vertical', !!settings.vertical);
+    document.body.classList.toggle('noguide', !settings.guide);
+    document.body.classList.toggle('namecolor', !!settings.nameColor);
+    fitSize();
+  }
+  // after: 'rebuild'（表示単位を作り直す）/ 'render'（時間の表示だけ更新）/ 'look'（見た目だけ）
+  function bindOpt(id, key, after) {
+    var el = $(id), isCheck = el.type === 'checkbox', isNum = typeof DEFAULTS[key] === 'number';
+    if (isCheck) el.checked = !!settings[key]; else el.value = String(settings[key]);
+    el.addEventListener('change', function () {
+      settings[key] = isCheck ? el.checked : isNum ? Number(el.value) : el.value;
+      save('rsvp.settings', settings);
+      if (after === 'rebuild') rebuild(keepPos());
+      else if (after === 'look') applyLook();
+      else render();
+      updateStatus();
+    });
+  }
+  bindOpt('rubyMode', 'rubyMode', 'rebuild');
+  bindOpt('group', 'group', 'rebuild');
+  bindOpt('minLen', 'minLen', 'rebuild');
+  bindOpt('pauses', 'pauses', 'render');
+  bindOpt('nameColor', 'nameColor', 'look');
+  bindOpt('nameLabel', 'nameLabel', 'rebuild');
+  bindOpt('nameSlow', 'nameSlow', 'render');
+  bindOpt('vertical', 'vertical', 'look');
+  bindOpt('guide', 'guide', 'look');
+  applyLook();
   bindNum('maxLen', 'maxLen', true);
   bindNum('pauseComma', 'pauseComma', false);
   bindNum('pausePeriod', 'pausePeriod', false);
@@ -883,7 +1232,8 @@ if (typeof module !== 'undefined') module.exports = Core;
 
   Promise.all([budoux, gaijiLoad, dbxHandleRedirect()]).then(function () {
     var last = load('rsvp.last');
-    if (last && last.paragraphs) openText(last.paragraphs.join('\n'), last.title);
+    if (last && last.doc) openDoc(last.doc, last.title);
+    else if (last && last.paragraphs) openText(last.paragraphs.join('\n'), last.title);
     else if (FILE_MODE) { $('hint').textContent = ''; $('msg').textContent = FILE_MSG; $('dlgOpen').showModal(); }
     else $('btnKumo').click();
     updateStatus();
