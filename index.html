@@ -511,6 +511,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   var DBX_KEY = '35c1ircgeeem499';
   var DBX_REDIRECT = location.origin + location.pathname.replace(/index\.html$/, '');
   var MARKS_PATH = '/bookmarks.json';
+  var DBX_SCOPES = 'files.metadata.read files.content.read files.content.write';
   var dbx = load('rsvp.dbx');      // { access, refresh, exp }
   var dbxMode = dbx ? '接続済み' : '未接続';
   var remoteMarks = null;          // bookmarks.json の中身 { works: { 作品id: { pos, at, total, title, device } } }
@@ -531,7 +532,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)).then(function (h) {
       location.href = 'https://www.dropbox.com/oauth2/authorize?' + new URLSearchParams({
         client_id: DBX_KEY, response_type: 'code', code_challenge: b64url(h), code_challenge_method: 'S256',
-        redirect_uri: DBX_REDIRECT, token_access_type: 'offline', state: state });
+        redirect_uri: DBX_REDIRECT, token_access_type: 'offline', state: state, scope: DBX_SCOPES });
     });
   }
   function tokenRequest(params) {
@@ -574,22 +575,29 @@ if (typeof module !== 'undefined') module.exports = Core;
       return r;
     });
   }
+  // Dropbox のエラーを、何をすればよいかが分かる文にする
+  function dbxError(status, text) {
+    if (/required scope|missing_scope/.test(text)) {
+      return new Error('Dropbox 側のアプリ設定で権限が足りません。App Console の Permissions で files.metadata.read / files.content.read / files.content.write にチェックして Submit し、この画面の「接続を解除」を押してから、もう一度接続してください。（' + status + '）');
+    }
+    return new Error(status + ' ' + text);
+  }
   function dbxRpc(path, body) {
     return dbxFetch('https://api.dropboxapi.com/2/' + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-      .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); });
+      .then(function (r) { return r.ok ? r.json() : r.text().then(function (t) { throw dbxError(r.status, t); }); });
   }
   function dbxDownload(path) {  // ファイルがなければ null
     return dbxFetch('https://content.dropboxapi.com/2/files/download', { method: 'POST', headers: { 'Dropbox-API-Arg': headerJson({ path: path }) } })
       .then(function (r) {
         if (r.status === 409) return null;
-        return r.ok ? r.arrayBuffer() : r.text().then(function (t) { throw new Error(r.status + ' ' + t); });
+        return r.ok ? r.arrayBuffer() : r.text().then(function (t) { throw dbxError(r.status, t); });
       });
   }
   function dbxUpload(path, text, keepalive) {
     return dbxFetch('https://content.dropboxapi.com/2/files/upload', { method: 'POST', keepalive: !!keepalive,
       headers: { 'Content-Type': 'application/octet-stream', 'Dropbox-API-Arg': headerJson({ path: path, mode: 'overwrite', mute: true }) },
       body: new TextEncoder().encode(text) })
-      .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw new Error(r.status + ' ' + t); }); });
+      .then(function (r) { if (!r.ok) return r.text().then(function (t) { throw dbxError(r.status, t); }); });
   }
 
   // 作品一覧（専用フォルダーの中の zip / txt。下のフォルダーも含む）
@@ -794,6 +802,20 @@ if (typeof module !== 'undefined') module.exports = Core;
     e.preventDefault();
   });
   $('stage').addEventListener('click', function () { if (Date.now() - lastTouchEnd > 600) toggle(); });
+
+  // iPhone でバー・つまみ・ボタンを続けて触ったときのダブルタップ拡大を止める（CSS の touch-action が効かない場合の予備）。
+  // 2回目のタップの既定動作を止め、代わりにクリックを送る。文字入力欄は対象外（入力できなくなるため）
+  var lastTap = 0;
+  document.addEventListener('touchend', function (e) {
+    var now = Date.now(), el = e.target;
+    var typing = /TEXTAREA|SELECT/.test(el.tagName) || (el.tagName === 'INPUT' && el.type !== 'range');
+    if (now - lastTap < 400 && e.changedTouches.length === 1 && !typing && !el.closest('#stage')) {
+      e.preventDefault();
+      var t = e.changedTouches[0];
+      if (el.type !== 'range') el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, clientX: t.clientX, clientY: t.clientY }));
+    }
+    lastTap = now;
+  }, { passive: false });
 
   // ---- 設定 ----
   function bindRange(id, key, fmtOut, after) {
