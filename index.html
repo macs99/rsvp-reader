@@ -170,13 +170,13 @@
     <div class="row"><label><input type="checkbox" id="pauses"> 句読点で間をとる</label></div>
     <div class="row"><label><input type="checkbox" id="nameColor"> 名前を色分け</label></div>
     <div class="row"><label for="nameLabel">人物ラベル</label><select id="nameLabel">
-      <option value="first3">章の最初3回</option><option value="first1">章の最初1回</option><option value="always">毎回</option><option value="off">なし</option></select></div>
+      <option value="first3">章の最初3回</option><option value="first1">章の最初1回</option><option value="always">毎回</option></select></div>
     <div class="row"><label><input type="checkbox" id="nameSlow"> 名前で少し長く</label></div>
     <div class="row"><label><input type="checkbox" id="vertical"> 縦表示</label></div>
     <div class="row"><label><input type="checkbox" id="guide"> 注視点ガイド</label></div>
   </div></div>
   <h3>名前（この作品）</h3>
-  <p class="note">1行に1つ。色分け・人物ラベル・「名前で少し長く」の対象になります。最初は本文から自動で探した候補が入ります（敬称の付く語、「と云う」の前の語、何度も出るカタカナ語）。</p>
+  <p class="note">1行に1つ。赤・太字の表示（人物ラベルの回数だけ）と「名前で少し長く」の対象になります。最初は本文から自動で探した候補が入ります（敬称の付く語、「と云う」の前の語、何度も出るカタカナ語）。</p>
   <textarea id="names"></textarea>
   <div class="row"><button id="btnNamesSave">名前を保存</button><button id="btnNamesAuto">自動で探し直す</button><span class="note" id="namesNote"></span></div>
   <h3>細かい設定</h3>
@@ -517,6 +517,7 @@ if (typeof module !== 'undefined') module.exports = Core;
     rubyMode: 'all', group: 1, pauses: true, nameColor: true, nameLabel: 'first3', nameSlow: true, vertical: false, guide: true };
   var NAME_SLOW = 1.25;        // 「名前で少し長く」：名前を含む単位の表示時間（句読点の間を除く）を 1.25 倍にする
   var settings = Object.assign({}, DEFAULTS, load('rsvp.settings') || {});
+  if (!/^(first3|first1|always)$/.test(settings.nameLabel)) settings.nameLabel = DEFAULTS.nameLabel;
   var parser = null;           // BudouX の日本語パーサー
   var segMode = '読み込み中';
   var gaiji = null, gaijiMode = '読み込み中';  // 外字の面区点番号 → 文字
@@ -535,37 +536,33 @@ if (typeof module !== 'undefined') module.exports = Core;
   // ---- 表示単位 ----
   function segment(p) { return parser ? parser.parse(p) : Core.fallbackSplit(p); }
   // 名前の位置と、表示するルビを段落ごとに計算する
-  //   ルビ：「同じ語すべて」なら、原文のルビ（2字以上で読みが1通りのもの）を同じ語の他の箇所にも付ける
-  //   名前の読み（人物ラベル）：章（見出し）ごとに、最初の3回／1回／毎回／なし
+  //   ルビ：「ルビ」の設定だけで決まる（名前も他の語と同じ扱い）。「同じ語すべて」なら、原文のルビ（2字以上で
+  //         読みが1通りのもの）を同じ語の他の箇所にも付ける
+  //   人物ラベル：名前を赤・太字にする回数。章（見出し）ごとに、毎回／最初の3回／最初の1回。
+  //         ラベルが付かない回も、名前として扱う（途中で切らない・「名前で少し長く」の対象）
   function prepare() {
-    var doc = work.doc, dict = Core.rubyDict(doc), names = work.names || [], isName = {};
-    names.forEach(function (n) { isName[n] = true; });
-    var reading = {};  // 名前 → 読み（原文でその名前全体にルビが付いているもの）
-    doc.ruby.forEach(function (list, pi) {
-      list.forEach(function (r) { var b = doc.paragraphs[pi].slice(r.s, r.e); if (isName[b] && !reading[b]) reading[b] = r.rt; });
-    });
-    var words = Object.keys(dict).filter(function (w) { return !isName[w]; });
-    var labelMax = { first3: 3, first1: 1, always: Infinity, off: 0 }[settings.nameLabel];
+    var doc = work.doc, dict = Core.rubyDict(doc), names = work.names || [];
+    var words = Object.keys(dict);
+    var labelMax = { always: Infinity, first3: 3, first1: 1 }[settings.nameLabel] || 3;
     var counts = {};
     work.nameHits = []; work.rubyShow = [];
     doc.paragraphs.forEach(function (p, pi) {
       if (doc.heading[pi]) counts = {};  // 見出しで章が変わったら数え直す
       var hits = names.length ? Core.findWords(p, names) : [];
-      var over = function (r) { return hits.some(function (h) { return r.s < h.e && h.s < r.e; }); };
+      hits.forEach(function (h) {
+        counts[h.word] = (counts[h.word] || 0) + 1;
+        h.label = counts[h.word] <= labelMax;
+      });
       var show = [];
       if (settings.rubyMode !== 'off') {
-        doc.ruby[pi].forEach(function (r) { if (!over(r)) show.push(r); });
+        show = doc.ruby[pi].slice();
         if (settings.rubyMode === 'all') {
           Core.findWords(p, words).forEach(function (h) {
-            if (over(h) || show.some(function (r) { return r.s < h.e && h.s < r.e; })) return;
+            if (show.some(function (r) { return r.s < h.e && h.s < r.e; })) return;
             show.push({ s: h.s, e: h.e, rt: dict[h.word] });
           });
         }
       }
-      hits.forEach(function (h) {
-        counts[h.word] = (counts[h.word] || 0) + 1;
-        if (reading[h.word] && counts[h.word] <= labelMax) show.push({ s: h.s, e: h.e, rt: reading[h.word] });
-      });
       show.sort(function (x, y) { return x.s - y.s; });
       work.nameHits.push(hits);
       work.rubyShow.push(show);
@@ -614,7 +611,7 @@ if (typeof module !== 'undefined') module.exports = Core;
   function unitHtml(u) {
     var p = work.doc.paragraphs[u.para], a = u.off, b = u.off + u.text.length;
     var rubies = work.rubyShow[u.para].filter(function (r) { return r.s >= a && r.e <= b; });
-    var names = work.nameHits[u.para].filter(function (h) { return h.s < b && h.e > a; });
+    var names = work.nameHits[u.para].filter(function (h) { return h.label && h.s < b && h.e > a; });
     var tokens = [], i = a;
     while (i < b) {
       var r = null;
